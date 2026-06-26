@@ -1,0 +1,205 @@
+# Slack Bridge fixed-copy templates.
+# Context values passed to the renderer must already be Slack mrkdwn escaped.
+
+ack:
+  text: "承知しました。確認します。"
+
+optional_extension_ack:
+  text: "受け取りました。追加処理の内容を確認します。"
+
+input_waiting:
+  title: "入力待ち"
+  quote:
+    - "{description}"
+
+input_wait_ask:
+  title: "確認"
+  quote:
+    - "確認したいことがあります。"
+  sections:
+    選択肢:
+      mode: "bullets"
+      items:
+        - "{options}"
+    返信方法:
+      mode: "quote"
+      text: "番号または自由文で回答できます（例: `1` ／ `追加条件はありません`）"
+
+plan_approval:
+  title: "実行前確認"
+  quote:
+    - "実行前に確認です。"
+  body:
+    - "{summary_lines}"
+  sections:
+    承認方法:
+      mode: "bullets"
+      items:
+        - "`1` 会話を整理して実行（以後の確認は自動で承認）"
+        - "`2` そのまま実行（自動承認）"
+        - "`3` そのまま実行（手動承認）"
+        - "*文章で返信*: プランの修正を依頼"
+    返信方法:
+      mode: "quote"
+      text: "`1` ／ `2` ／ `3` で承認。修正したい場合は文章でそのまま返信してください。"
+
+tool_permission_numbered:
+  title: "許可確認"
+  quote:
+    - "ツール実行の確認です。"
+  sections:
+    返信方法:
+      mode: "quote"
+      text: "`1` で今回のみ許可、`2` で同じ種類の操作も許可、`3` で拒否"
+
+free_input:
+  title: "入力待ち"
+  quote:
+    - "返信お願いします。"
+  sections:
+    返信方法:
+      mode: "quote"
+      text: "テキストで回答してください"
+
+session_not_found:
+  title: "確認"
+  quote:
+    - "セッションが見つかりません。"
+
+session_error:
+  title: "停止"
+  quote:
+    - "このスレッドの処理でエラーが発生しました。新しいスレッドで再依頼してください。"
+
+unknown_status:
+  title: "確認"
+  quote:
+    - "処理状態を確認できませんでした。必要なら新しいスレッドで再依頼してください。"
+
+empty_answer:
+  title: "確認"
+  quote:
+    - "空の回答は送信できません。"
+
+answer_send_failed:
+  title: "停止"
+  quote:
+    - "回答の送信に失敗しました。"
+
+state_update_failed:
+  title: "停止"
+  quote:
+    - "状態更新に失敗しました。"
+
+queue_append_failed:
+  title: "停止"
+  quote:
+    - "再送の準備に失敗しました。もう一度返信してください。"
+
+queue_send_failed:
+  title: "停止"
+  quote:
+    - "メッセージ送信に失敗しました。スレッドで再投稿してください。"
+
+queue_retry:
+  title: "停止"
+  quote:
+    - "送信に失敗しました。再送できる状態にしました。少ししてからもう一度返信してください。"
+
+session_limit:
+  title: "停止"
+  quote:
+    - "セッション上限です : {limit}"
+
+tmux_pane_limit:
+  title: "停止"
+  quote:
+    - "同時に処理できる作業枠の上限（{capacity}件）に達しています。"
+  sections:
+    次:
+      mode: "quote"
+      text: "不要な作業枠を整理しましたが、まだ空きがありません。少し待ってから再依頼してください。"
+
+session_killed:
+  title: "完了"
+  quote:
+    - "セッションを終了しました。"
+
+session_interrupted:
+  title: "停止"
+  quote:
+    - "中断しました。"
+
+session_abnormal_exit:
+  title: "停止"
+  quote:
+    - "セッションが異常終了しました。新しいスレッドで再開してください。"
+
+process_exited:
+  title: "停止"
+  quote:
+    - "処理プロセスが異常終了したため、一時停止しました。同じスレッドで再依頼してください。"
+
+resume_in_progress:
+  title: "復帰中"
+  quote:
+    - "セッションを復旧しています。"
+
+recovery_progress:
+  title: "復帰中"
+  quote:
+    - "簡易復旧しています。"
+
+resume_failed:
+  title: "停止"
+  quote:
+    - "復帰に失敗しました。"
+
+resume_retry_thread:
+  title: "停止"
+  quote:
+    - "セッションの復元に失敗しました。新しいスレッドで再開してください。"
+
+resume_error:
+  title: "停止"
+  quote:
+    - "再開に失敗しました。状態確認が必要です。"
+
+turn_timeout:
+  title: "停止"
+  quote:
+    - "60分以内に返信完了通知が来なかったため、このターンを一時停止しました。同じスレッドで再依頼してください。"
+
+wait_timeout:
+  title: "停止"
+  quote:
+    - "180分間回答がなかったため、セッションを一時停止しました。スレッドに返信すると再開できます。"
+
+codex_ready_timeout:
+  title: "停止"
+  quote:
+    - "AI worker の起動がタイムアウトしました。"
+
+optional_extension_worker_ready_timeout:
+  title: "停止"
+  quote:
+    - "追加処理処理の起動がタイムアウトしました。"
+
+codex_launch_error:
+  title: "停止"
+  quote:
+    - "AI worker の起動エラーです。"
+
+optional_extension_worker_launch_error:
+  title: "停止"
+  quote:
+    - "追加処理処理の起動エラーです。"
+
+optional_extension_reply_context_missing:
+  title: "停止"
+  quote:
+    - "Slack返信の元イベント情報を確認できませんでした。"
+  sections:
+    次:
+      mode: "quote"
+      text: "同じ内容をもう一度このスレッドに返信してください。"

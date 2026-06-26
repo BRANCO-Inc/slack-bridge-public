@@ -1,0 +1,13 @@
+target-version = "py314"
+line-length = 100
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[lint.isort]
+known-first-party = ["config", "runtime_env"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
