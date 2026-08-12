@@ -255,8 +255,6 @@ class HookHandler(BaseHTTPRequestHandler):
         substantive: bool,
         reply_request_id: str | None = None,
     ):
-        delay = 1
-        last_result = {"ok": False, "error": "slack_post_failed"}
         set_reply_request_id = getattr(self.bridge.post_to_slack, "set_reply_request_id", None)
         reset_reply_request_id = getattr(self.bridge.post_to_slack, "reset_reply_request_id", None)
         if callable(set_reply_request_id) and callable(reset_reply_request_id):
@@ -266,68 +264,23 @@ class HookHandler(BaseHTTPRequestHandler):
             token = None
             reset_reply_request_context = None
         try:
-            for attempt in range(3):
-                last_result = self._normalize_post_result(
-                    self.bridge.post_to_slack(
-                        channel_id,
-                        thread_ts,
-                        text,
-                        substantive=substantive,
-                    )
+            return self._normalize_post_result(
+                self.bridge.post_to_slack(
+                    channel_id,
+                    thread_ts,
+                    text,
+                    substantive=substantive,
                 )
-                if last_result.get("ok"):
-                    return last_result
-                if last_result.get("posted_reply_ts"):
-                    return last_result
-                if attempt < 2:
-                    retry_after = last_result.get("retry_after")
-                    try:
-                        sleep_seconds = int(retry_after) if retry_after is not None else delay
-                    except TypeError, ValueError:
-                        sleep_seconds = delay
-                    if not config.TEST_MODE:
-                        time.sleep(max(1, sleep_seconds))
-                    delay *= 2
+            )
         finally:
             if reset_reply_request_context is not None:
                 reset_reply_request_context(token)
-        logger.error(
-            "Slack post failed after retries channel=%s thread=%s error=%s",
-            channel_id,
-            thread_ts,
-            last_result.get("error", "slack_post_failed"),
-        )
-        return last_result
 
     def _post_reaction(self, channel_id: str, message_ts: str, reaction_name: str):
         add_reaction = getattr(self.bridge, "add_reaction", None)
         if not callable(add_reaction):
             return {"ok": False, "error": "reaction_not_configured"}
-        delay = 1
-        last_result = {"ok": False, "error": "slack_reaction_failed"}
-        for attempt in range(3):
-            last_result = self._normalize_post_result(
-                add_reaction(channel_id, message_ts, reaction_name)
-            )
-            if last_result.get("ok"):
-                return last_result
-            if attempt < 2:
-                retry_after = last_result.get("retry_after")
-                try:
-                    sleep_seconds = int(retry_after) if retry_after is not None else delay
-                except TypeError, ValueError:
-                    sleep_seconds = delay
-                if not config.TEST_MODE:
-                    time.sleep(max(1, sleep_seconds))
-                delay *= 2
-        logger.error(
-            "Slack reaction failed after retries channel=%s ts=%s reaction=%s error=%s",
-            channel_id,
-            message_ts,
-            reaction_name,
-            last_result.get("error", "slack_reaction_failed"),
-        )
-        return last_result
+        return self._normalize_post_result(add_reaction(channel_id, message_ts, reaction_name))
 
     def _mark_turn_attempt(self, turn_id: str, **updates):
         return self.bridge.state.mark_turn_attempt_completed(turn_id, **updates)

@@ -1,4 +1,3 @@
-import time
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import cast
@@ -12,7 +11,6 @@ from config import (
     STALE_TIMEOUT,
     STATE_DB_PATH,
     TERMINAL_SESSION_RETENTION,
-    TEST_MODE,
     TURN_COMPLETION_TIMEOUT,
     TURN_TIMEOUT_TEXT,
     WAIT_TIMEOUT_TEXT,
@@ -102,26 +100,6 @@ class SessionLifecycle:
         self.input_detector = input_detector
         self.post_to_slack = post_to_slack_fn
         self.state = state
-
-    def _post_to_slack_with_retry(self, channel_id: str, thread_ts: str, text: str):
-        delay = 1
-        last_result = {"ok": False, "error": "slack_post_failed"}
-        for attempt in range(3):
-            result = self.post_to_slack(channel_id, thread_ts, text)
-            if not isinstance(result, dict) or result.get("ok", True):
-                return result
-            last_result = result
-            if attempt < 2:
-                if not TEST_MODE:
-                    time.sleep(delay)
-                delay *= 2
-        logger.error(
-            "Slack post failed after retries channel=%s thread=%s error=%s",
-            channel_id,
-            thread_ts,
-            last_result.get("error", "slack_post_failed"),
-        )
-        return last_result
 
     def _manual_transition(self, session: Session, new_status: Status, updates: dict) -> Session:
         loaded = None
@@ -266,7 +244,7 @@ class SessionLifecycle:
             )
         self.input_detector.clear_session(updated.thread_ts)
         self.finalize_session_turns(session, "error")
-        self._post_to_slack_with_retry(
+        self.post_to_slack(
             updated.channel_id,
             updated.thread_ts,
             SESSION_ABNORMAL_EXIT_TEXT,
