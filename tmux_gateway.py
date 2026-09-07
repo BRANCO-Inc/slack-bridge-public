@@ -54,6 +54,10 @@ class PaneAllocationError(RuntimeError):
     """Raised when a tmux pane cannot be allocated explicitly."""
 
 
+class TmuxQueryError(RuntimeError):
+    """Raised when tmux state cannot be queried reliably."""
+
+
 class PaneGeometry:
     def __init__(self, pane_id: str, width: int, height: int):
         self.pane_id = pane_id
@@ -97,8 +101,11 @@ class PaneInfo:
 class TmuxGateway:
     def __init__(self, session_name: str | None = None):
         self.session_name = session_name or TMUX_SESSION_NAME
+        self.ensure_session()
         self._migrate_legacy_windows()
         self._normalize_session_windows()
+        for window_name in all_window_names():
+            self.ensure_window(window_name)
 
     # --- 基本コマンド実行 ---
 
@@ -110,8 +117,47 @@ class TmuxGateway:
             timeout=timeout or TMUX_COMMAND_TIMEOUT,
         )
         if check and result.returncode != 0:
-            raise RuntimeError(f"{config.TMUX_BIN} {' '.join(args)} failed: {result.stderr.strip()}")
+            raise RuntimeError(
+                f"{config.TMUX_BIN} {' '.join(args)} failed: {result.stderr.strip()}"
+            )
         return result.stdout.strip()
+
+    def _session_exists(self) -> bool:
+        result = subprocess.run(
+            [config.TMUX_BIN, "has-session", "-t", self.session_name],
+            capture_output=True,
+            text=True,
+            timeout=TMUX_COMMAND_TIMEOUT,
+        )
+        if result.returncode == 0:
+            return True
+        if result.returncode == 1:
+            return False
+        raise TmuxQueryError(f"{config.TMUX_BIN} has-session failed: {result.stderr.strip()}")
+
+    def ensure_session(self) -> None:
+        if self._session_exists():
+            return
+        pane_id = self._run(
+            [
+                "new-session",
+                "-d",
+                "-s",
+                self.session_name,
+                "-n",
+                GENERAL_WINDOW_NAME,
+                "-c",
+                BRIDGE_DIR,
+                "-P",
+                "-F",
+                "#{pane_id}",
+            ]
+        )
+        if not self._session_exists():
+            raise TmuxQueryError(f"tmux session was not created: {self.session_name}")
+        if not pane_id:
+            raise TmuxQueryError("tmux new-session returned no pane_id")
+        self.mark_bridge_pane(pane_id)
 
     # --- ウィンドウ操作 ---
 
@@ -132,25 +178,20 @@ class TmuxGateway:
             logger.debug("normalize_session_windows failed for %s: %s", self.session_name, e)
 
     def _list_window_names(self) -> list[str]:
-        output = self._run(
-            ["list-windows", "-t", self.session_name, "-F", "#{window_name}"], check=False
-        )
+        output = self._run(["list-windows", "-t", self.session_name, "-F", "#{window_name}"])
         return [line.strip() for line in output.splitlines() if line.strip()]
 
     def _migrate_legacy_windows(self) -> None:
-        try:
-            existing = set(self._list_window_names())
-            for legacy_name, current_name in LEGACY_TO_CURRENT_WINDOW_NAMES.items():
-                if legacy_name not in existing or current_name in existing:
-                    continue
-                self._run(
-                    ["rename-window", "-t", self._window_target(legacy_name), current_name],
-                    check=True,
-                )
-                existing.remove(legacy_name)
-                existing.add(current_name)
-        except Exception as e:
-            logger.debug("legacy window migration failed for %s: %s", self.session_name, e)
+        existing = set(self._list_window_names())
+        for legacy_name, current_name in LEGACY_TO_CURRENT_WINDOW_NAMES.items():
+            if legacy_name not in existing or current_name in existing:
+                continue
+            self._run(
+                ["rename-window", "-t", self._window_target(legacy_name), current_name],
+                check=True,
+            )
+            existing.remove(legacy_name)
+            existing.add(current_name)
 
     def ensure_window(self, window_name: str, working_dir: str | None = None) -> bool:
         """Ensure a tmux window exists and return True when it was created."""
@@ -170,7 +211,11 @@ class TmuxGateway:
                 ]
                 if effective_working_dir:
                     command.extend(["-c", effective_working_dir])
-                self._run(command)
+                command.extend(["-P", "-F", "#{pane_id}"])
+                pane_id = self._run(command)
+                if not pane_id:
+                    raise TmuxQueryError("tmux new-window returned no pane_id")
+                self.mark_bridge_pane(pane_id)
                 self._normalize_session_windows()
                 created = True
             self._ensure_pool_window_size(window_name)
@@ -182,7 +227,7 @@ class TmuxGateway:
     def _ensure_pool_window_size(self, window_name: str) -> None:
         if window_name not in all_window_names():
             return
-        width, height = self._target_pool_window_size()
+        width, height = self._target_pool_window_size(window_name)
         self._run(
             [
                 "resize-window",
@@ -196,17 +241,23 @@ class TmuxGateway:
             check=False,
         )
 
-    def _target_pool_window_size(self) -> tuple[int, int]:
-        client_width, client_height = self._read_tmux_size(
-            ["display-message", "-p", "#{client_width} #{client_height}"]
+    def _target_pool_window_size(self, window_name: str) -> tuple[int, int]:
+        window_width, window_height = self._read_tmux_size(
+            [
+                "display-message",
+                "-t",
+                self._window_target(window_name),
+                "-p",
+                "#{window_width} #{window_height}",
+            ]
         )
         return (
-            max(TMUX_POOL_WINDOW_WIDTH, client_width or 0),
-            max(TMUX_POOL_WINDOW_HEIGHT, client_height or 0),
+            max(TMUX_POOL_WINDOW_WIDTH, window_width or 0),
+            max(TMUX_POOL_WINDOW_HEIGHT, window_height or 0),
         )
 
     def _read_tmux_size(self, args: list[str]) -> tuple[int, int]:
-        output = self._run(args, check=False)
+        output = self._run(args)
         parts = output.split()
         if len(parts) < 2:
             return 0, 0
@@ -232,7 +283,7 @@ class TmuxGateway:
         if panes:
             return max(pane.width for pane in panes), max(pane.height for pane in panes)
         if window_name in all_window_names():
-            return self._target_pool_window_size()
+            return self._target_pool_window_size(window_name)
         return TMUX_POOL_WINDOW_WIDTH, TMUX_POOL_WINDOW_HEIGHT
 
     def _list_pane_geometries(self, window_name: str) -> list[PaneGeometry]:
@@ -244,7 +295,6 @@ class TmuxGateway:
                 "-F",
                 "#{pane_id} #{pane_width} #{pane_height}",
             ],
-            check=False,
         )
         panes: list[PaneGeometry] = []
         for line in output.splitlines():
@@ -528,7 +578,7 @@ class TmuxGateway:
             BRIDGE_PANE_MARKER_VERSION_OPTION: BRIDGE_PANE_MARKER_VERSION,
         }
         for option, value in option_values.items():
-            self._run(["set-option", "-p", "-t", pane_id, option, value], check=False)
+            self._run(["set-option", "-p", "-t", pane_id, option, value])
         title_subject = case_id or conversation_identity or pane_id
         self._run(
             [
@@ -538,7 +588,7 @@ class TmuxGateway:
                 "-T",
                 f"Slack Bridge {BRIDGE_PANE_INSTANCE}: {title_subject}"[:120],
             ],
-            check=False,
+            check=True,
         )
 
     def _pane_window_and_ownership(self, pane_id: str) -> tuple[str, str, str]:
@@ -556,33 +606,30 @@ class TmuxGateway:
                     ]
                 ),
             ],
-            check=False,
         )
         parts = output.split("\t")
         if len(parts) < 3:
             parts.extend([""] * (3 - len(parts)))
         return parts[0].strip(), parts[1].strip(), parts[2].strip()
 
-    def kill_pane(self, pane_id: str):
+    def kill_pane(self, pane_id: str) -> bool:
         """ペインを削除し、所属ウィンドウのレイアウトを再調整"""
         window_name, bridge_owned, bridge_instance = self._pane_window_and_ownership(pane_id)
         if bridge_owned != "1" or bridge_instance != BRIDGE_PANE_INSTANCE:
             logger.debug("skip unmanaged pane kill for %s", pane_id)
-            return
-        try:
-            self._run(["kill-pane", "-t", pane_id], check=False)
-        except Exception as e:
-            logger.debug("kill_pane failed for %s: %s", pane_id, e)
-        try:
-            if window_name:
-                self._rebalance_window_layout(window_name)
-        except Exception as e:
-            logger.debug("select_layout failed for %s: %s", window_name, e)
+            return False
+        self._run(["kill-pane", "-t", pane_id])
+        if self.pane_exists(pane_id):
+            return False
+        if window_name:
+            self.ensure_window(window_name)
+            self._rebalance_window_layout(window_name)
+        return True
 
     def list_panes(self, window_name: str) -> list[str]:
         """ウィンドウ内のペインID一覧を取得"""
         output = self._run(
-            ["list-panes", "-t", self._window_target(window_name), "-F", "#{pane_id}"], check=False
+            ["list-panes", "-t", self._window_target(window_name), "-F", "#{pane_id}"]
         )
         return [line.strip() for line in output.splitlines() if line.strip()]
 
@@ -608,7 +655,6 @@ class TmuxGateway:
                     ]
                 ),
             ],
-            check=False,
         )
         panes: list[PaneInfo] = []
         for line in output.splitlines():
@@ -628,8 +674,11 @@ class TmuxGateway:
         try:
             self._run(["display-message", "-t", pane_id, "-p", ""], check=True)
             return True
-        except Exception:
-            return False
+        except RuntimeError as exc:
+            message = str(exc).lower()
+            if "can't find pane" in message or "no server running" in message:
+                return False
+            raise TmuxQueryError(f"tmux pane query failed for {pane_id}") from exc
 
     def pane_is_shell_or_dead(self, pane_id: str) -> bool:
         """Return True when a pane is gone/dead or has returned to an interactive shell."""
@@ -644,8 +693,8 @@ class TmuxGateway:
                 ],
                 check=True,
             )
-        except Exception:
-            return True
+        except RuntimeError as exc:
+            raise TmuxQueryError(f"tmux pane state query failed for {pane_id}") from exc
         command, _, dead = output.partition("\t")
         return dead.strip() == "1" or command.strip() in REUSABLE_SHELL_COMMANDS
 
@@ -655,8 +704,8 @@ class TmuxGateway:
             output = self._run(
                 ["display-message", "-t", pane_id, "-p", "#{pane_in_mode}"], check=True
             )
-        except Exception:
-            return False
+        except RuntimeError as exc:
+            raise TmuxQueryError(f"tmux pane mode query failed for {pane_id}") from exc
         return output.strip() == "1"
 
     # --- ターゲット解決 ---

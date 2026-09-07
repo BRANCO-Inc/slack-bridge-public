@@ -4,9 +4,6 @@
 ack:
   text: "承知しました。確認します。"
 
-optional_extension_ack:
-  text: "受け取りました。追加処理の内容を確認します。"
-
 input_waiting:
   title: "入力待ち"
   quote:
@@ -180,26 +177,7 @@ codex_ready_timeout:
   quote:
     - "AI worker の起動がタイムアウトしました。"
 
-optional_extension_worker_ready_timeout:
-  title: "停止"
-  quote:
-    - "追加処理処理の起動がタイムアウトしました。"
-
 codex_launch_error:
   title: "停止"
   quote:
     - "AI worker の起動エラーです。"
-
-optional_extension_worker_launch_error:
-  title: "停止"
-  quote:
-    - "追加処理処理の起動エラーです。"
-
-optional_extension_reply_context_missing:
-  title: "停止"
-  quote:
-    - "Slack返信の元イベント情報を確認できませんでした。"
-  sections:
-    次:
-      mode: "quote"
-      text: "同じ内容をもう一度このスレッドに返信してください。"

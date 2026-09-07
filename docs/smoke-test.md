@@ -1,48 +1,34 @@
-# Slack Bridge Public Smoke Test
+# 動作確認
 
-## Overview
+doctorが成功し、自分のテスト用SlackチャンネルへBotを招待してから確認します。
+この手順は利用者が自分の環境で行います。自動テストはSlackへ投稿しません。
 
-この手順は setup と doctor が通った後、Slack API への接続と worker 起動を最小限で確認するための手動チェックです。
+## 最初の返信
 
-## Before You Start
+1. `venv/bin/python scripts/run.py` でBridgeを起動します。
+2. Slackで `@Slack Bridge Assistant テストです。短く返信してください。` と送ります。
+3. 同じスレッドに受付とAIからの返信が来ることを確認します。
+4. そのスレッドに続けて `今の内容を一文にして` と送り、会話が継続することを確認します。
 
-- `venv/bin/python scripts/doctor.py` が成功している
-- Windows の場合は `.\venv\Scripts\python.exe scripts\doctor.py` が成功している
-- Slack App manifest を Slack 側へ反映している
-- Bot token、App token を `.env` に設定している
+## 基本機能
 
-## Steps
+| 操作 | 確認する結果 |
+| --- | --- |
+| BotへDMする | DM内のスレッドに返信が来る |
+| 小さなテキストファイルを添付して内容を尋ねる | 添付を読んだ回答が返る |
+| 二つのスレッドで依頼する | それぞれのスレッドに結果が返る |
+| AIから質問が来たスレッドへ回答する | 対象の会話が続く |
+| セッション起点のメッセージへ`:white_check_mark:`を付ける | 起点者または登録管理者の操作でセッションが終了する |
+| 終了したスレッドでもう一度Botに依頼する | 新しいworkerで会話が再開する |
 
-1. tmux セッションを作る。
+`:ai-boot:` を使う場合は、その名前のカスタム絵文字をSlackに追加してください。スレッドのメッセージに付けると、AIが文脈を読んで手伝えることを提案します。
 
-   ```bash
-   tmux new-session -d -s slack-bridge -c "$PWD"
-   ```
+## 停止と再起動
 
-2. Slack Bridge を起動する。
+Bridgeのターミナルで `Ctrl+C` を押して停止し、同じ `scripts/run.py` で再起動します。
+継続中のスレッドに返信して会話が再開することを確認します。送信済みの同じ回答が自動で重複投稿されないことも確認してください。
 
-   ```bash
-   venv/bin/python scripts/run.py
-   ```
+## 確認の範囲
 
-   Windows の場合:
-
-   ```powershell
-   .\venv\Scripts\python.exe scripts\run.py
-   ```
-
-3. Slack の対象チャンネルで Bot にメンションする。
-
-   ```text
-   @Slack Bridge Assistant テストです。短く返信してください。
-   ```
-
-4. Slack スレッドに worker から返信が返ることを確認する。
-
-5. 返信が返らない場合は doctor を再実行し、hook port、tmux、shell、選択中の AI worker CLI の順に確認する。
-
-## Do Not Automate Here
-
-- Slack token の値をログに出さない。
-- Slack API への接続確認を doctor に混ぜない。
-- 本番チャンネルで最初の動作確認をしない。
+リポジトリの自動テストはキュー、返信認証、停止操作、setup/doctorなどを外部通信なしで検証します。
+自分のSlack Appの権限とAI CLIのログイン状態は、上の実環境での確認が必要です。

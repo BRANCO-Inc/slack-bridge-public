@@ -4,36 +4,26 @@ import hashlib
 import os
 import re
 import shutil
+import sys
 from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 
 DEFAULT_HOOK_SERVER_PORT = 9111
 DEFAULT_AI_WORKER_PROVIDER = "claude"
-DEFAULT_CODEX_BIN = "/opt/homebrew/bin/codex"
-DEFAULT_CLAUDE_BIN = "claude"
 DEFAULT_SHELL_BIN = "/bin/zsh"
 AI_WORKER_PROVIDERS = frozenset({"claude", "codex"})
 PUBLIC_PROFILES = frozenset({"public", "core", "client"})
-PRIVATE_PROFILES = frozenset()
 DEFAULT_PROFILE = "public"
-DEFAULT_DATA_ROOT = str(
-    Path.home() / "Library" / "Application Support" / "slack-bridge"
-)
 DEFAULT_TMUX_SESSION_BASE = "slack-bridge"
 LEGACY_TMUX_PREFIX = "legacy"
 LEGACY_TMUX_SESSION_BASE = f"{LEGACY_TMUX_PREFIX}-code"
 GENERAL_PANE_POOL_WINDOWS = ("worker", "worker-2")
-OPTIONAL_EXTENSION_PANE_POOL_WINDOWS = ("worker-optional_extension", "worker-optional_extension-2")
 LEGACY_GENERAL_PANE_POOL_WINDOWS = (LEGACY_TMUX_PREFIX, f"{LEGACY_TMUX_PREFIX}-2")
-LEGACY_OPTIONAL_EXTENSION_PANE_POOL_WINDOWS = (
-    f"{LEGACY_TMUX_PREFIX}-optional_extension",
-    f"{LEGACY_TMUX_PREFIX}-optional_extension-2",
-)
 LEGACY_TO_CURRENT_WINDOW_NAMES = {
     legacy: current
     for legacy, current in zip(
-        LEGACY_GENERAL_PANE_POOL_WINDOWS + LEGACY_OPTIONAL_EXTENSION_PANE_POOL_WINDOWS,
-        GENERAL_PANE_POOL_WINDOWS + OPTIONAL_EXTENSION_PANE_POOL_WINDOWS,
+        LEGACY_GENERAL_PANE_POOL_WINDOWS,
+        GENERAL_PANE_POOL_WINDOWS,
         strict=True,
     )
 }
@@ -43,10 +33,10 @@ INSTANCE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 def active_profile(env: Mapping[str, str] | None = None) -> str:
     source = os.environ if env is None else env
     value = (source.get("SLACK_BRIDGE_PROFILE", "") or DEFAULT_PROFILE).strip().lower()
-    if value not in PUBLIC_PROFILES | PRIVATE_PROFILES:
+    if value not in PUBLIC_PROFILES:
         raise RuntimeError(
             "SLACK_BRIDGE_PROFILE must be one of "
-            f"{sorted(PUBLIC_PROFILES | PRIVATE_PROFILES)} (received: {value!r})"
+            f"{sorted(PUBLIC_PROFILES)} (received: {value!r})"
         )
     return value
 
@@ -80,32 +70,20 @@ def resolve_ai_worker_provider(env: Mapping[str, str]) -> str:
         raw_value = env.get(env_name, "")
         if raw_value.strip():
             return normalize_ai_worker_provider(raw_value)
-    if active_profile(env) in PUBLIC_PROFILES:
-        return "claude"
     return DEFAULT_AI_WORKER_PROVIDER
-
-
-def private_profile_enabled(profile: str | None = None, env: Mapping[str, str] | None = None) -> bool:
-    name = active_profile(env) if profile is None else profile.strip().lower()
-    if name in PUBLIC_PROFILES:
-        return False
-    if name in PRIVATE_PROFILES:
-        return True
-    raise RuntimeError(
-        "SLACK_BRIDGE_PROFILE must be one of "
-        f"{sorted(PUBLIC_PROFILES | PRIVATE_PROFILES)} (received: {name!r})"
-    )
 
 
 def default_data_root_path(env: Mapping[str, str] | None = None) -> Path:
     source = os.environ if env is None else env
-    if active_profile(source) in PUBLIC_PROFILES:
-        if os.name == "nt":
-            base = source.get("LOCALAPPDATA", "").strip() or str(Path.home() / "AppData" / "Local")
-            return Path(base) / "slack-bridge"
-        home = Path(source.get("HOME", "")).expanduser() if source.get("HOME") else Path.home()
+    home = Path(source.get("HOME", "")).expanduser() if source.get("HOME") else Path.home()
+    if sys.platform == "darwin":
         return home / "Library" / "Application Support" / "slack-bridge"
-    return Path(DEFAULT_DATA_ROOT)
+    data_home = source.get("XDG_DATA_HOME", "").strip()
+    return (
+        Path(data_home).expanduser() / "slack-bridge"
+        if data_home
+        else home / ".local" / "share" / "slack-bridge"
+    )
 
 
 def normalize_instance_name(raw_value: str) -> str:
@@ -213,26 +191,22 @@ def resolve_codex_bin_path(
     env: Mapping[str, str],
     *,
     test_mode: bool = False,
-    default_codex_bin: str = DEFAULT_CODEX_BIN,
 ) -> str:
     raw_value = env.get("CODEX_BIN", "").strip()
     if raw_value:
         return validate_executable_absolute_path(raw_value, env_name="CODEX_BIN")
     if test_mode:
         return "codex"
-    if active_profile(env) in PUBLIC_PROFILES:
-        candidate = _which_absolute("codex", env)
-        if candidate:
-            return candidate
-        raise RuntimeError("CODEX_BIN must be set to an executable absolute path.")
-    return validate_executable_absolute_path(default_codex_bin, env_name="CODEX_BIN")
+    candidate = _which_absolute("codex", env)
+    if candidate:
+        return candidate
+    raise RuntimeError("CODEX_BIN must be set to an executable absolute path.")
 
 
 def resolve_claude_bin_path(
     env: Mapping[str, str],
     *,
     test_mode: bool = False,
-    default_claude_bin: str = DEFAULT_CLAUDE_BIN,
 ) -> str:
     raw_value = env.get("CLAUDE_BIN", "").strip()
     if raw_value:
@@ -242,9 +216,7 @@ def resolve_claude_bin_path(
     candidate = _which_absolute("claude", env)
     if candidate:
         return candidate
-    if active_profile(env) in PUBLIC_PROFILES:
-        raise RuntimeError("CLAUDE_BIN must be set to an executable absolute path.")
-    return validate_executable_absolute_path(default_claude_bin, env_name="CLAUDE_BIN")
+    raise RuntimeError("CLAUDE_BIN must be set to an executable absolute path.")
 
 
 def resolve_worker_bin_path(

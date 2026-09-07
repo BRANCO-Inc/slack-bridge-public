@@ -248,11 +248,12 @@ class WorkerProcess:
 
     def _cleanup_update_restart_pane(self, pane_id: str) -> None:
         try:
-            self.tmux.kill_pane(pane_id)
+            if self.tmux.kill_pane(pane_id) is not True:
+                raise RuntimeError("tmux did not confirm pane removal")
         except Exception as exc:
-            logger.warning(
-                "Codex update pane cleanup failed before restart for %s: %s", pane_id, exc
-            )
+            raise RuntimeError(
+                f"Codex update pane cleanup failed before restart for {pane_id}: {exc}"
+            ) from exc
 
     def _allocation_failure_suspend_spec(
         self, session: Session, message: dict | str
@@ -678,11 +679,17 @@ class WorkerProcess:
             if turn_id:
                 cleanup_turn_context(turn_id)
             return
+        pane_cleared = not pane_id
+        if pane_id:
+            try:
+                pane_cleared = self.tmux.kill_pane(pane_id) is True
+            except Exception as exc:
+                logger.warning("kill_pane failed during launch failure for %s: %s", pane_id, exc)
         latest = self._update_session(
             session,
             status=status,
             failure_reason=reason,
-            pane_id=None,
+            pane_id=None if pane_cleared else pane_id,
             **clear_turn_fields(),
         )
         if self.state is not None and latest.last_event_id:
@@ -705,11 +712,6 @@ class WorkerProcess:
         self._close_turn_attempt_on_failure(latest, turn_id=turn_id)
         if turn_id:
             cleanup_turn_context(turn_id)
-        if pane_id:
-            try:
-                self.tmux.kill_pane(pane_id)
-            except Exception as exc:
-                logger.debug("kill_pane failed during launch failure for %s: %s", pane_id, exc)
 
     def _format_message_for_agent(
         self,

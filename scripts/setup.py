@@ -39,8 +39,10 @@ def write_env(*, overwrite: bool = False) -> bool:
     dest = PROJECT_ROOT / ".env"
     if dest.exists() and not overwrite:
         return False
-    dest.write_text(env_text(secrets.token_urlsafe(32)), encoding="utf-8")
-    os.chmod(dest, 0o600)
+    fd = os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        os.fchmod(handle.fileno(), 0o600)
+        handle.write(env_text(secrets.token_urlsafe(32)))
     return True
 
 

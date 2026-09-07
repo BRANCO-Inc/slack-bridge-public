@@ -1,6 +1,6 @@
 """Bridge 拡張の宣言的規格。
 
-個別ユースケース（optional_extension / optional_extension / ai_boot など）の本体散在を防ぐための
+個別ユースケース（ai_boot など）の本体散在を防ぐための
 最小規約。ローダーや動的登録は持たず、`extensions/__init__.py` の明示リスト
 `EXTENSIONS` だけが登録点になる。
 

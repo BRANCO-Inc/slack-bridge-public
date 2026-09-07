@@ -8,9 +8,15 @@ from collections.abc import Mapping, Set
 from pathlib import Path
 
 from runtime_env import (
-    DEFAULT_CLAUDE_BIN,
-    DEFAULT_CODEX_BIN,
-    PUBLIC_PROFILES,
+    GENERAL_PANE_POOL_WINDOWS as _GENERAL_PANE_POOL_WINDOWS,
+)
+from runtime_env import (
+    LEGACY_GENERAL_PANE_POOL_WINDOWS as _LEGACY_GENERAL_PANE_POOL_WINDOWS,
+)
+from runtime_env import (
+    LEGACY_TO_CURRENT_WINDOW_NAMES as _LEGACY_TO_CURRENT_WINDOW_NAMES,
+)
+from runtime_env import (
     active_profile,
     default_hook_server_port,
     default_live_cwd,
@@ -24,21 +30,6 @@ from runtime_env import (
     resolve_hook_server_port,
     resolve_shell_bin_path,
     resolve_tmux_bin_path,
-)
-from runtime_env import (
-    GENERAL_PANE_POOL_WINDOWS as _GENERAL_PANE_POOL_WINDOWS,
-)
-from runtime_env import (
-    LEGACY_GENERAL_PANE_POOL_WINDOWS as _LEGACY_GENERAL_PANE_POOL_WINDOWS,
-)
-from runtime_env import (
-    LEGACY_OPTIONAL_EXTENSION_PANE_POOL_WINDOWS as _LEGACY_OPTIONAL_EXTENSION_PANE_POOL_WINDOWS,
-)
-from runtime_env import (
-    LEGACY_TO_CURRENT_WINDOW_NAMES as _LEGACY_TO_CURRENT_WINDOW_NAMES,
-)
-from runtime_env import (
-    OPTIONAL_EXTENSION_PANE_POOL_WINDOWS as _OPTIONAL_EXTENSION_PANE_POOL_WINDOWS,
 )
 from slack_copy.renderer import render_message
 
@@ -83,7 +74,8 @@ def _resolve_claude_bin(
 
 
 def _resolve_ai_worker_provider(
-    *, env: dict[str, str] | os._Environ[str] = os.environ,
+    *,
+    env: dict[str, str] | os._Environ[str] = os.environ,
 ) -> str:
     return resolve_ai_worker_provider(env)
 
@@ -105,9 +97,7 @@ def _initial_codex_bin(env: Mapping[str, str] | None = None) -> str:
     raw_value = source.get("CODEX_BIN", "").strip()
     if raw_value:
         return _resolve_codex_bin(env=dict(source), test_mode=TEST_MODE)
-    if TEST_MODE or active_profile(source) in PUBLIC_PROFILES:
-        return "codex"
-    return DEFAULT_CODEX_BIN
+    return "codex"
 
 
 def _initial_claude_bin(env: Mapping[str, str] | None = None) -> str:
@@ -115,9 +105,7 @@ def _initial_claude_bin(env: Mapping[str, str] | None = None) -> str:
     raw_value = source.get("CLAUDE_BIN", "").strip()
     if raw_value:
         return _resolve_claude_bin(env=dict(source), test_mode=TEST_MODE)
-    if TEST_MODE or active_profile(source) in PUBLIC_PROFILES:
-        return "claude"
-    return DEFAULT_CLAUDE_BIN
+    return "claude"
 
 
 def _initial_ai_worker_provider(env: Mapping[str, str] | None = None) -> str:
@@ -186,17 +174,13 @@ def read_secret(account: str, *, optional: bool = False) -> str:
 
 
 def _initial_secret(account: str) -> str:
-    if not (TEST_MODE or SLACK_BRIDGE_PROFILE in PUBLIC_PROFILES):
-        return ""
     return os.environ.get(f"{account}{_instance_account_suffix()}", "").strip()
 
 
 # Slack auth
 SLACK_BOT_TOKEN = _initial_secret("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = _initial_secret("SLACK_APP_TOKEN")
-SLACK_USER_TOKEN = _initial_secret("SLACK_USER_TOKEN")
-if SLACK_BRIDGE_PROFILE in PUBLIC_PROFILES:
-    SLACK_USER_TOKEN = SLACK_BOT_TOKEN
+SLACK_USER_TOKEN = SLACK_BOT_TOKEN
 SLACK_BRIDGE_AUTH_TOKEN = _initial_secret("SLACK_BRIDGE_AUTH_TOKEN")
 
 
@@ -206,10 +190,7 @@ def resolve_runtime_secrets() -> None:
 
     SLACK_BOT_TOKEN = read_secret("SLACK_BOT_TOKEN")
     SLACK_APP_TOKEN = read_secret("SLACK_APP_TOKEN")
-    if SLACK_BRIDGE_PROFILE in PUBLIC_PROFILES:
-        SLACK_USER_TOKEN = SLACK_BOT_TOKEN
-    else:
-        SLACK_USER_TOKEN = read_secret("SLACK_USER_TOKEN")
+    SLACK_USER_TOKEN = SLACK_BOT_TOKEN
     SLACK_BRIDGE_AUTH_TOKEN = read_secret("SLACK_BRIDGE_AUTH_TOKEN")
 
 
@@ -226,6 +207,7 @@ def resolve_runtime_paths() -> None:
     TMUX_BIN = _resolve_tmux_bin()
     SHELL_BIN = _resolve_shell_bin()
 
+
 # Derived values — resolved at runtime via auth.test API in slack_bridge.py
 SLACK_BOT_USER_ID: str = ""
 SLACK_TEAM_ID: str = ""
@@ -234,18 +216,13 @@ SLACK_TEAM_ID: str = ""
 TMUX_SESSION_NAME = _resolve_tmux_session_name()
 LEGACY_TMUX_SESSION_NAMES = legacy_tmux_session_names(SLACK_BRIDGE_INSTANCE)
 GENERAL_PANE_POOL_NAME = "general"
-OPTIONAL_EXTENSION_PANE_POOL_NAME = "optional_extension"
 GENERAL_PANE_POOL_WINDOWS = _GENERAL_PANE_POOL_WINDOWS
-OPTIONAL_EXTENSION_PANE_POOL_WINDOWS = _OPTIONAL_EXTENSION_PANE_POOL_WINDOWS
 LEGACY_GENERAL_PANE_POOL_WINDOWS = _LEGACY_GENERAL_PANE_POOL_WINDOWS
-LEGACY_OPTIONAL_EXTENSION_PANE_POOL_WINDOWS = _LEGACY_OPTIONAL_EXTENSION_PANE_POOL_WINDOWS
 LEGACY_TO_CURRENT_WINDOW_NAMES = _LEGACY_TO_CURRENT_WINDOW_NAMES
 PANE_POOL_WINDOW_MAX_PANES = 12
 GENERAL_PANE_POOL_MAX_PANES = PANE_POOL_WINDOW_MAX_PANES * len(GENERAL_PANE_POOL_WINDOWS)
-OPTIONAL_EXTENSION_PANE_POOL_MAX_PANES = PANE_POOL_WINDOW_MAX_PANES * len(OPTIONAL_EXTENSION_PANE_POOL_WINDOWS)
-PANE_POOL_MAX_PANES = GENERAL_PANE_POOL_MAX_PANES + OPTIONAL_EXTENSION_PANE_POOL_MAX_PANES
+PANE_POOL_MAX_PANES = GENERAL_PANE_POOL_MAX_PANES
 GENERAL_WINDOW_NAME = GENERAL_PANE_POOL_WINDOWS[0]
-OPTIONAL_EXTENSION_WINDOW_NAME = OPTIONAL_EXTENSION_PANE_POOL_WINDOWS[0]
 TMUX_COMMAND_TIMEOUT = 10
 TMUX_SEND_TIMEOUT = 30
 TMUX_PASTE_SETTLE_DELAY = 0.2
@@ -361,6 +338,7 @@ REPLY_CLAIM_TIMEOUT = 30
 
 # Hooks
 CASE_REPLY_CMD_PATH = os.path.join(BRIDGE_DIR, "case_reply.sh")
+WORKER_REPLY_AUTH_WRAPPER_PATH = ""
 NOTIFICATION_RATE_LIMIT_CHANNEL_IDS = frozenset(
     _parse_csv_names(
         os.environ.get(
@@ -382,14 +360,7 @@ def _members_json_path() -> Path:
     override = os.environ.get("SLACK_BRIDGE_MEMBERS_FILE", "").strip()
     if override:
         return Path(override)
-    if SLACK_BRIDGE_PROFILE in PUBLIC_PROFILES:
-        return Path(BRIDGE_DIR) / "config" / "members.json"
-    base_dir = Path(BRIDGE_DIR) / "config"
-    default_path = base_dir / "members.json"
-    if not SLACK_BRIDGE_INSTANCE:
-        return default_path
-    instance_path = base_dir / f"members.{SLACK_BRIDGE_INSTANCE}.json"
-    return instance_path if instance_path.exists() else default_path
+    return Path(BRIDGE_DIR) / "config" / "members.json"
 
 
 _MEMBERS_JSON = _members_json_path()
@@ -397,7 +368,7 @@ _MEMBERS_JSON = _members_json_path()
 
 def _load_members() -> dict[str, str]:
     path = _MEMBERS_JSON
-    if SLACK_BRIDGE_PROFILE in PUBLIC_PROFILES and not path.exists():
+    if not path.exists():
         return {}
     with open(path) as f:
         data = json.load(f)

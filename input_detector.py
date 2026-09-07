@@ -82,21 +82,6 @@ INPUT_WAIT_PATTERNS: list[InputWaitPattern] = [
     },
 ]
 
-CONTROL_COMMAND_PATTERNS = {
-    "cancel": re.compile(r"^\s*キャンセル\s*$"),
-    "end": re.compile(r"^\s*終了\s*$"),
-}
-
-
-def detect_session_control_command(text: str) -> str | None:
-    """Slack 文言からセッション制御コマンドを抽出する。"""
-    if not text:
-        return None
-    for command, pattern in CONTROL_COMMAND_PATTERNS.items():
-        if pattern.fullmatch(text):
-            return command
-    return None
-
 
 class InputWaitResult:
     """入力待ち検出結果"""

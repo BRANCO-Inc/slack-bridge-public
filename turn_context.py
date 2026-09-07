@@ -6,6 +6,7 @@ import shlex
 import shutil
 from dataclasses import dataclass
 
+import config
 from config import (
     CASE_REPLY_CMD_PATH,
     HOOK_SERVER_PORT,
@@ -73,8 +74,10 @@ def write_turn_context(session, *, turn_id: str) -> TurnArtifacts:
     snapshot_path = turn_context_path(session.window_name, turn_id)
     latest_path = turn_context_path(session.window_name, pane_id=session.pane_id)
     reply_command_path = turn_reply_command_path(session.window_name, turn_id)
-    os.makedirs(TURN_ARTIFACTS_BASE, exist_ok=True)
-    os.makedirs(turn_artifact_dir(turn_id), exist_ok=True)
+    os.makedirs(TURN_ARTIFACTS_BASE, mode=0o700, exist_ok=True)
+    os.chmod(TURN_ARTIFACTS_BASE, 0o700)
+    os.makedirs(turn_artifact_dir(turn_id), mode=0o700, exist_ok=True)
+    os.chmod(turn_artifact_dir(turn_id), 0o700)
     os.makedirs(os.path.dirname(latest_path), exist_ok=True)
     _write_json_file(snapshot_path, payload)
     _write_json_file(latest_path, payload)
@@ -89,6 +92,9 @@ def write_turn_context(session, *, turn_id: str) -> TurnArtifacts:
 def _write_reply_wrapper(
     reply_command_path: str, snapshot_path: str, payload: dict[str, str]
 ) -> None:
+    auth_wrapper = config.WORKER_REPLY_AUTH_WRAPPER_PATH
+    if not auth_wrapper:
+        raise RuntimeError("worker reply auth wrapper is not prepared")
     script = "\n".join(
         [
             "#!/bin/sh",
@@ -100,10 +106,10 @@ def _write_reply_wrapper(
             f"export SLACK_BRIDGE_WORKER_SESSION_ID={shlex.quote(payload['session_id'])}",
             f"export CC_PANE_ID={shlex.quote(payload['pane_id'])}",
             f'export BRIDGE_BASE_URL="${{BRIDGE_BASE_URL:-http://127.0.0.1:{HOOK_SERVER_PORT}}}"',
-            f'exec {shlex.quote(CASE_REPLY_CMD_PATH)} "$@"',
+            f'exec {shlex.quote(auth_wrapper)} {shlex.quote(CASE_REPLY_CMD_PATH)} "$@"',
             "",
         ]
     )
     with open(reply_command_path, "w", encoding="utf-8") as handle:
         handle.write(script)
-    os.chmod(reply_command_path, 0o755)
+    os.chmod(reply_command_path, 0o700)

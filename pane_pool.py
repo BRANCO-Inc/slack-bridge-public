@@ -12,9 +12,6 @@ from config import (
     GENERAL_PANE_POOL_NAME,
     GENERAL_PANE_POOL_WINDOWS,
     LEGACY_TO_CURRENT_WINDOW_NAMES,
-    OPTIONAL_EXTENSION_PANE_POOL_MAX_PANES,
-    OPTIONAL_EXTENSION_PANE_POOL_NAME,
-    OPTIONAL_EXTENSION_PANE_POOL_WINDOWS,
     PANE_POOL_WINDOW_MAX_PANES,
 )
 from extensions.base import pool_name_for_envelope as _extension_pool_name_for_envelope
@@ -42,22 +39,12 @@ PANE_POOLS: dict[str, PanePoolDefinition] = {
         window_max_panes=PANE_POOL_WINDOW_MAX_PANES,
         total_max_panes=GENERAL_PANE_POOL_MAX_PANES,
     ),
-    OPTIONAL_EXTENSION_PANE_POOL_NAME: PanePoolDefinition(
-        pool_name=OPTIONAL_EXTENSION_PANE_POOL_NAME,
-        window_names=OPTIONAL_EXTENSION_PANE_POOL_WINDOWS,
-        window_max_panes=PANE_POOL_WINDOW_MAX_PANES,
-        total_max_panes=OPTIONAL_EXTENSION_PANE_POOL_MAX_PANES,
-    ),
 }
 
 _WINDOW_TO_POOL = {
     window_name: definition.pool_name
     for definition in PANE_POOLS.values()
     for window_name in definition.window_names
-}
-_LEGACY_WINDOW_TO_POOL = {
-    legacy_name: _WINDOW_TO_POOL[current_name]
-    for legacy_name, current_name in LEGACY_TO_CURRENT_WINDOW_NAMES.items()
 }
 
 
@@ -78,13 +65,7 @@ def windows_for_pool(pool_name: str | None) -> list[str]:
 
 
 def known_windows_for_pool(pool_name: str | None) -> list[str]:
-    current_windows = windows_for_pool(pool_name)
-    legacy_windows = [
-        legacy_name
-        for legacy_name, current_name in LEGACY_TO_CURRENT_WINDOW_NAMES.items()
-        if current_name in current_windows
-    ]
-    return [*current_windows, *legacy_windows]
+    return windows_for_pool(pool_name)
 
 
 def all_window_names() -> list[str]:
@@ -98,7 +79,7 @@ def legacy_window_names() -> list[str]:
 
 
 def all_known_window_names() -> list[str]:
-    return [*all_window_names(), *legacy_window_names()]
+    return all_window_names()
 
 
 def canonical_window_name(window_name: str | None) -> str | None:
@@ -111,8 +92,6 @@ def pool_name_for_window(window_name: str | None) -> str:
     canonical_name = canonical_window_name(window_name)
     if canonical_name in _WINDOW_TO_POOL:
         return _WINDOW_TO_POOL[canonical_name]
-    if window_name in _LEGACY_WINDOW_TO_POOL:
-        return _LEGACY_WINDOW_TO_POOL[window_name]
     return GENERAL_PANE_POOL_NAME
 
 

@@ -14,15 +14,9 @@ from config import (
     SLACK_BOT_TOKEN,
 )
 from extensions.ai_boot import AI_BOOT_INSTRUCTION, is_ai_boot_reaction_event
-from extensions.registry import (
-    is_optional_extension_notification_message,
-    is_optional_extension_notification_metadata,
-    optional_extension_case_id_from_metadata,
-    optional_extension_notification_actor,
-)
 
 logger = get_logger(__name__)
-SUPPORTED_MESSAGE_SUBTYPES = {"file_share"}
+SUPPORTED_MESSAGE_SUBTYPES = {"file_share", "thread_broadcast"}
 
 
 def build_conversation_identity(channel_id: str, root_thread_ts: str) -> str:
@@ -45,11 +39,9 @@ def is_session_revival_event(envelope: dict) -> bool:
     return is_message_event(envelope) or is_ai_boot_reaction_event(envelope)
 
 
-def is_supported_message_subtype(event: dict, *, source_event_type: str) -> bool:
+def is_supported_message_subtype(event: dict) -> bool:
     subtype = event.get("subtype")
     if not subtype:
-        return True
-    if source_event_type == "optional_extension_notification" and is_optional_extension_notification_message(event):
         return True
     return subtype in SUPPORTED_MESSAGE_SUBTYPES
 
@@ -89,7 +81,7 @@ def fetch_channel_info(runtime, body: dict, event: dict) -> dict:
         return info
     try:
         client = runtime.user_client if channel_type in {"channel", "group"} else runtime.app_client
-        response = client.conversations_info(channel=channel_id)
+        response = slack_api.slack_read_call(client, "conversations_info", channel=channel_id)
         channel = response.get("channel", {})
         info.update(
             {
@@ -110,6 +102,10 @@ def fetch_channel_info(runtime, body: dict, event: dict) -> dict:
                 info["type"] = "group"
             else:
                 info["type"] = "channel"
+    except slack_api.SlackApiCallFailure as e:
+        if e.classification in {"transient", "retry_exhausted", "exception"}:
+            raise
+        logger.warning("conversations_info failed for %s: %s", channel_id, e)
     except SlackApiError as e:
         logger.warning("conversations_info failed for %s: %s", channel_id, e)
     return info
@@ -290,7 +286,7 @@ def build_message_envelope(
             body["event_id"], status="done", failure_reason="external_shared_ignored"
         )
         return None
-    if not is_supported_message_subtype(event, source_event_type=source_event_type):
+    if not is_supported_message_subtype(event):
         runtime.state.update_event(
             body["event_id"], status="done", failure_reason="unsupported_message_subtype_ignored"
         )
@@ -336,12 +332,6 @@ def build_message_envelope(
         files, SLACK_BOT_TOKEN
     )
     metadata = event.get("metadata") or {}
-    optional_extension_case_id = optional_extension_case_id_from_metadata(metadata)
-    if source_event_type == "optional_extension_notification" and not optional_extension_case_id:
-        runtime.state.update_event(
-            body["event_id"], status="failed", failure_reason="invalid_optional_extension_metadata"
-        )
-        return None
     bootstrap_thread = is_thread and not has_existing_session
     root_ts = event.get("thread_ts") or event["ts"]
     target, root, messages, truncated = fetch_thread_snapshot(
@@ -352,24 +342,6 @@ def build_message_envelope(
         limit=200 if bootstrap_thread else 20,
         fetch_all=bootstrap_thread,
     )
-    raw_root_metadata = root.get("metadata")
-    root_metadata = raw_root_metadata if isinstance(raw_root_metadata, dict) else {}
-    if (
-        not optional_extension_case_id
-        and is_thread
-        and source_event_type == "message"
-        and is_optional_extension_notification_metadata(root_metadata)
-    ):
-        inherited_optional_extension_case_id = optional_extension_case_id_from_metadata(root_metadata)
-        if not inherited_optional_extension_case_id:
-            runtime.state.update_event(
-                body["event_id"],
-                status="failed",
-                failure_reason="invalid_optional_extension_thread_metadata",
-            )
-            return None
-        metadata = root_metadata
-        optional_extension_case_id = inherited_optional_extension_case_id
     if (
         source_event_type == "message"
         and is_thread
@@ -382,8 +354,6 @@ def build_message_envelope(
         )
         return None
     actor = fetch_actor(runtime, event.get("user", ""))
-    if source_event_type == "optional_extension_notification":
-        actor = optional_extension_notification_actor(actor)
     target_text = str(target.get("text", text) or "")
     source_text = slack_api.strip_mention(target_text) if mentioned else target_text
     root_thread_ts = str(root.get("thread_ts") or root.get("ts") or "")
@@ -422,47 +392,7 @@ def build_message_envelope(
             "thread_ts": root_thread_ts,
         },
     }
-    if optional_extension_case_id:
-        envelope["case_id"] = optional_extension_case_id
     return envelope
-
-
-def build_message_metadata_posted_envelope(runtime, body: dict, event: dict) -> dict | None:
-    metadata = event.get("metadata") or {}
-    if not is_optional_extension_notification_metadata(metadata):
-        runtime.state.update_event(
-            body["event_id"], status="done", failure_reason="metadata_event_type_ignored"
-        )
-        return None
-    channel_id = event.get("channel") or event.get("channel_id") or ""
-    message_ts = event.get("message_ts") or event.get("ts") or event.get("event_ts") or ""
-    if not channel_id or not message_ts:
-        runtime.state.update_event(
-            body["event_id"], status="failed", failure_reason="metadata_message_ref_missing"
-        )
-        return None
-    synthetic_message = {
-        "type": "message",
-        "channel": channel_id,
-        "channel_type": event.get("channel_type", ""),
-        "ts": message_ts,
-        "text": "追加処理メール",
-        "files": [],
-        "metadata": metadata,
-    }
-    if event.get("thread_ts"):
-        synthetic_message["thread_ts"] = event["thread_ts"]
-    if event.get("bot_id"):
-        synthetic_message["subtype"] = "bot_message"
-        synthetic_message["bot_id"] = event["bot_id"]
-    if event.get("user") or event.get("user_id"):
-        synthetic_message["user"] = event.get("user") or event.get("user_id")
-    return build_message_envelope(
-        runtime,
-        body,
-        synthetic_message,
-        source_event_type="optional_extension_notification",
-    )
 
 
 def claim_ai_boot_reaction(runtime, body: dict, *, channel_id: str, item_ts: str) -> bool:

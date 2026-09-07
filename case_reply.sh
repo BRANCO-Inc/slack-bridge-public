@@ -67,10 +67,6 @@ resolve_project_python() {
     echo "$BRIDGE_DIR/venv/bin/python"
     return
   fi
-  if [ -x "$BRIDGE_DIR/venv/Scripts/python.exe" ]; then
-    echo "$BRIDGE_DIR/venv/Scripts/python.exe"
-    return
-  fi
   echo "$BRIDGE_DIR/venv/bin/python"
 }
 
@@ -103,35 +99,11 @@ PY
 }
 
 resolve_data_root() {
-  "$SLACK_BRIDGE_PYTHON_BIN" - <<'PY'
+  PYTHONPATH="$BRIDGE_DIR${PYTHONPATH:+:$PYTHONPATH}" "$SLACK_BRIDGE_PYTHON_BIN" - <<'PY'
 import os
-from pathlib import Path
+from runtime_env import resolve_data_root_path
 
-raw = os.environ.get("SLACK_BRIDGE_DATA_ROOT", "").strip()
-if raw:
-    value = raw
-else:
-    profile = (os.environ.get("SLACK_BRIDGE_PROFILE", "") or "public").strip().lower()
-    if profile in {"public", "core", "client"}:
-        if os.name == "nt":
-            base = os.environ.get("LOCALAPPDATA", "").strip() or str(
-                Path.home() / "AppData" / "Local"
-            )
-            value = str(Path(base) / "slack-bridge")
-        else:
-            value = str(Path.home() / "Library" / "Application Support" / "slack-bridge")
-    else:
-        raise SystemExit(
-            "SLACK_BRIDGE_PROFILE must be one of "
-            "['client', 'core', 'public'] "
-            f"(received: {profile!r})"
-        )
-if not Path(value).is_absolute():
-    raise SystemExit(
-        "SLACK_BRIDGE_DATA_ROOT must be an absolute path "
-        f"(received: {raw!r})"
-    )
-print(value)
+print(resolve_data_root_path(os.environ))
 PY
 }
 
@@ -163,29 +135,6 @@ if not instance:
     raise SystemExit(0)
 digest = hashlib.sha256(instance.encode("utf-8")).hexdigest()
 print(10000 + (int(digest[:8], 16) % 50000))
-PY
-}
-
-bridge_auth_account() {
-  SLACK_BRIDGE_INSTANCE_NORMALIZED="$INSTANCE" "$SLACK_BRIDGE_PYTHON_BIN" - <<'PY'
-import os
-
-instance = os.environ.get("SLACK_BRIDGE_INSTANCE_NORMALIZED", "")
-suffix = ""
-if instance:
-    suffix = "_" + instance.upper().replace("-", "_")
-print("SLACK_BRIDGE_AUTH_TOKEN" + suffix)
-PY
-}
-
-resolve_bridge_auth_token() {
-  local account
-  account="$(bridge_auth_account)"
-  SLACK_BRIDGE_AUTH_ACCOUNT="$account" "$SLACK_BRIDGE_PYTHON_BIN" - <<'PY'
-import os
-
-account = os.environ["SLACK_BRIDGE_AUTH_ACCOUNT"]
-print(os.environ.get(account, "").strip())
 PY
 }
 
@@ -377,7 +326,7 @@ trap cleanup EXIT
 CURL_ARGS=(
   -H "Content-Type: application/json"
 )
-AUTH_TOKEN="$(resolve_bridge_auth_token)"
+AUTH_TOKEN="${SLACK_BRIDGE_AUTH_TOKEN:-}"
 if [ -z "$AUTH_TOKEN" ]; then
   echo "SLACK_BRIDGE_AUTH_TOKEN is required before sending a case reply" >&2
   exit 1

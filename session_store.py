@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 from bridge_logging import get_logger
-from bridge_state import BridgeState
+from bridge_state import BridgeState, utc_now
 from config import STATE_DB_PATH
 from session import ACTIVE_VALUES, ALLOWED_TRANSITIONS, Session, Status, coerce_status
 
@@ -144,6 +145,65 @@ class SessionStore:
                 thread_ts=session.thread_ts,
             )
         return created
+
+    def create_initial_queue_if_absent(
+        self,
+        session: Session | dict,
+        payload: dict | str,
+        *,
+        lease_owner: str,
+        lease_seconds: int = 300,
+    ) -> int | None:
+        """Persist a new session and its first claimed event as one transaction."""
+        session = self._coerce_session(session)
+        record = session.to_db_record()
+        columns = tuple(record.keys())
+        values = tuple(record[column] for column in columns)
+        payload_json = json.dumps(
+            payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        )
+        event_id = payload.get("event_id") if isinstance(payload, dict) else None
+        now = utc_now()
+        with self._connect(write=True) as conn:
+            cursor = conn.execute(
+                f"""
+                INSERT OR IGNORE INTO sessions ({", ".join(columns)})
+                VALUES ({", ".join("?" for _ in columns)})
+                """,
+                values,
+            )
+            if cursor.rowcount != 1:
+                return None
+            queue_cursor = conn.execute(
+                """
+                INSERT INTO event_queue (
+                    event_id, conversation_identity, channel_id, thread_ts, payload_json,
+                    status, lease_owner, lease_expires_at, retry_count, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'dispatching', ?, datetime('now', ?), 1, ?, ?)
+                """,
+                (
+                    event_id,
+                    session.conversation_identity,
+                    session.channel_id,
+                    session.thread_ts,
+                    payload_json,
+                    lease_owner,
+                    f"+{lease_seconds} seconds",
+                    now,
+                    now,
+                ),
+            )
+            if event_id:
+                conn.execute(
+                    """
+                    UPDATE event_ledger
+                    SET status = 'dispatching', conversation_identity = ?,
+                        last_updated_at = ?, failure_reason = NULL
+                    WHERE event_id = ? AND status NOT IN ('done', 'failed')
+                    """,
+                    (session.conversation_identity, now, event_id),
+                )
+            return int(queue_cursor.lastrowid)
 
     def append_to_queue(self, key: str, item: dict | str) -> Session | None:
         with self._connect() as conn:

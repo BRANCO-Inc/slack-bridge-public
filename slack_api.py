@@ -7,6 +7,7 @@ import mimetypes
 import os
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
@@ -34,6 +35,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 JST = timezone(timedelta(hours=9))
 SLACK_PERMANENT_ERRORS = {"missing_scope", "not_in_channel", "not_found"}
+TRANSIENT_TRANSPORT_ERRORS = (urllib.error.URLError, TimeoutError, ConnectionError)
 CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]")
 
 
@@ -107,9 +109,20 @@ def _call_slack_api_with_retries(mode: str, operation: str, call):
             error = _slack_response_error(response)
             status = _slack_response_status(response)
             retry_after = _slack_response_retry_after(response)
-            retryable = status == 429 or (status is not None and status >= 500)
+            delivery_unknown = (
+                mode == "post"
+                and operation == "chat_postMessage"
+                and (status is not None and status >= 500)
+            )
+            retryable = not delivery_unknown and (
+                status == 429 or (status is not None and status >= 500)
+            )
             exhausted = attempt >= attempts or not retryable
-            classification = _classify_slack_error(error, status, exhausted=exhausted)
+            classification = (
+                "delivery_unknown"
+                if delivery_unknown
+                else _classify_slack_error(error, status, exhausted=exhausted)
+            )
             last_failure = SlackApiCallFailure(
                 mode=mode,
                 operation=operation,
@@ -133,14 +146,34 @@ def _call_slack_api_with_retries(mode: str, operation: str, call):
             )
             time.sleep(_retry_delay(attempt, retry_after))
         except Exception as e:
-            raise SlackApiCallFailure(
+            failure = SlackApiCallFailure(
                 mode=mode,
                 operation=operation,
                 error=type(e).__name__,
                 status=None,
-                classification="exception",
+                classification=(
+                    "delivery_unknown"
+                    if mode == "post" and operation == "chat_postMessage"
+                    else "exception"
+                ),
                 attempts=attempt,
-            ) from e
+            )
+            if (
+                mode != "read"
+                or attempt >= attempts
+                or not isinstance(e, TRANSIENT_TRANSPORT_ERRORS)
+            ):
+                raise failure from e
+            last_failure = failure
+            logger.warning(
+                "Slack %s %s transport error; retrying attempt=%s/%s error=%s",
+                mode,
+                operation,
+                attempt,
+                attempts,
+                type(e).__name__,
+            )
+            time.sleep(_retry_delay(attempt, None))
     if last_failure is not None:
         raise last_failure
     raise SlackApiCallFailure(
@@ -337,6 +370,7 @@ def make_post_to_slack(
                 "status": e.status,
                 "retry_after": e.retry_after,
                 "posted_reply_ts": [response.get("ts") for response in responses],
+                "delivery_unknown": e.classification == "delivery_unknown",
             }
             return result
         except Exception as e:

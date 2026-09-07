@@ -1,4 +1,3 @@
-from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
@@ -63,6 +62,12 @@ def reap_idle_sessions(
         last_activity = _coerce_now(session.last_activity_at)
         if current - last_activity < IDLE_TIMEOUT_WINDOW:
             continue
+        if session.pane_id:
+            try:
+                if tmux.kill_pane(session.pane_id) is not True:
+                    continue
+            except Exception:
+                continue
         updated = store.transition(
             session.conversation_identity,
             Status.IDLE,
@@ -75,9 +80,6 @@ def reap_idle_sessions(
         )
         if updated is None:
             continue
-        if session.pane_id:
-            with suppress(Exception):
-                tmux.kill_pane(session.pane_id)
         reaped += 1
     return reaped
 
@@ -196,6 +198,13 @@ class SessionLifecycle:
 
     def clear_pane_after_teardown(self, session: Session) -> Session:
         if not session.pane_id:
+            return session
+        try:
+            if self.tmux.pane_exists(session.pane_id):
+                logger.warning("pane still exists after teardown: %s", session.pane_id)
+                return session
+        except Exception as exc:
+            logger.warning("cannot confirm pane teardown for %s: %s", session.pane_id, exc)
             return session
         persisted = self.store.update_fields(
             session.conversation_identity,
@@ -400,32 +409,25 @@ class SessionLifecycle:
     def kill(self, session: Session):
         current = self.store.load(session.conversation_identity) or session
         active_turn_id = current.active_turn_id
+        if current.pane_id:
+            try:
+                if self.tmux.kill_pane(current.pane_id) is not True:
+                    return None
+            except Exception as exc:
+                logger.warning("kill_pane failed for %s: %s", current.pane_id, exc)
+                return None
         updated = self.transition(
             current,
             Status.KILLED,
             expected_status=ACTIVE | {Status.SUSPENDED},
-            updates=clear_turn_fields(),
+            updates={"pane_id": None, **clear_turn_fields()},
             teardown=False,
         )
         if updated is None:
             return None
-        if current.pane_id:
-            try:
-                self.tmux.kill_pane(current.pane_id)
-            except Exception as exc:
-                logger.warning("kill_pane failed for %s: %s", current.pane_id, exc)
         self.input_detector.clear_session(updated.thread_ts)
-        persisted = self.store.update_fields(
-            updated.conversation_identity,
-            {
-                "pane_id": None,
-                "last_activity_at": now_utc(),
-            },
-        )
-        final_session = persisted if isinstance(persisted, Session) else updated
-        final_session.pane_id = None
         self.finalize_session_turns(current, "killed", turn_id=active_turn_id)
-        return final_session
+        return updated
 
     def terminate_for_restart(self, session: Session, *, reason: str = "graceful_shutdown_restart"):
         current = self.store.load(session.conversation_identity) or session

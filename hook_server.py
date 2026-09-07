@@ -16,10 +16,6 @@ import config
 from bridge_logging import get_logger
 from bridge_state import BridgeState
 from config import HOOK_SERVER_PORT
-from extensions.registry import (
-    is_optional_extension_analysis_report_reply,
-    record_optional_extension_analysis_report_post_failure,
-)
 from pane_pool import canonical_window_name
 from session import Status, now_utc
 from turn_context import cleanup_turn_context
@@ -446,7 +442,6 @@ class HookHandler(BaseHTTPRequestHandler):
         session_id = body.get("session_id", "").strip()
         text = body.get("text", "")
         completion_action = (body.get("completion_action") or "done").strip() or "done"
-        final_attempt = body.get("final_attempt") is True
         if not reply_request_id:
             self._json(400, {"ok": False, "error": "reply_request_id_required"})
             return
@@ -599,8 +594,8 @@ class HookHandler(BaseHTTPRequestHandler):
         if not result.get("ok"):
             error = result.get("error", "slack_post_failed")
             posted_reply_ts = [ts for ts in result.get("posted_reply_ts") or [] if ts]
-            if posted_reply_ts:
-                reply_ts = posted_reply_ts[-1]
+            if posted_reply_ts or result.get("delivery_unknown"):
+                reply_ts = posted_reply_ts[-1] if posted_reply_ts else ""
                 try:
                     self.bridge.state.mark_reply_posted_unknown(
                         reply_request_id,
@@ -620,21 +615,6 @@ class HookHandler(BaseHTTPRequestHandler):
             else:
                 self._release_turn_reply_claim(turn_id, reply_request_id=reply_request_id)
                 self.bridge.state.mark_reply_failed(reply_request_id, last_error=error)
-                if final_attempt and is_optional_extension_analysis_report_reply(text):
-                    failure_record = record_optional_extension_analysis_report_post_failure(
-                        case_id=case_id,
-                        reply_request_id=reply_request_id,
-                        turn_id=turn_id,
-                        error=error,
-                        text=text,
-                    )
-                    if not failure_record.get("ok") and not failure_record.get("skipped"):
-                        logger.warning(
-                            "optional_extension analysis post failure recorder failed: reply_request_id=%s error=%s detail=%s",
-                            reply_request_id,
-                            failure_record.get("error"),
-                            failure_record,
-                        )
                 if result.get("status") == 429:
                     retry_after = str(result.get("retry_after") or "1")
                     self._json(

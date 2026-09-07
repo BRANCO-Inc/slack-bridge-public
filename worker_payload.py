@@ -1,8 +1,7 @@
 """worker へ送るプロンプト本文の組み立て（worker_process / message_dispatch 共用）。
 
 旧 worker_process._format_message_for_agent / message_dispatch._payload_to_text の
-二重実装の統合先。拡張のプロンプト注入（optional_extension 指示 / optional extension bootstrap）は
-extensions の prepend_prompt フック経由で適用する。
+二重実装の統合先。拡張のプロンプト注入は extensions の prepend_prompt フック経由で適用する。
 """
 
 from __future__ import annotations
@@ -39,8 +38,6 @@ def build_worker_payload(
     - fresh_worker=False: 稼働中 worker への追撃 turn（旧 message_dispatch 形式。
       最小ヘッダのみ）
     - conversation_session: prepend_prompt フックの TurnContext.session。
-      既存会話への追撃 turn でのみ渡す（optional_extension 会話への bootstrap 強制注入判定）。
-      初回/再開 turn は payload 判定のみで注入する（現行挙動の維持）。
     """
     if isinstance(message, str):
         return _format_text_message(

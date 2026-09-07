@@ -29,25 +29,12 @@ from config import (
     SESSION_INTERRUPTED_TEXT,
     SESSION_KILLED_TEXT,
     SLACK_BOT_TOKEN,
-    SLACK_USER_TOKEN,
     TMUX_SESSION_NAME,
-)
-from config import (
-    OPTIONAL_EXTENSION_WINDOW_NAME as CONFIG_OPTIONAL_EXTENSION_WINDOW_NAME,
 )
 from extensions import EXTENSIONS
 from extensions.base import handle_envelope_extensions, make_outbound_pipeline
-from extensions.registry import (
-    OPTIONAL_EXTENSION_POOL_WAITING_REASON_PREFIX,
-    is_duplicate_optional_extension_notification,
-    is_optional_extension_notification_message,
-    is_optional_extension_notification_metadata,
-    is_optional_extension_pool_mismatch,
-    mark_duplicate_optional_extension_notification,
-    optional_extension_ack_text,
-)
 from hook_server import HookBridge, start_hook_server
-from input_detector import InputDetector, detect_session_control_command
+from input_detector import InputDetector
 from interactive_handler import InteractiveHandler
 from message_dispatch import MessageDispatch
 from pane_pool import (
@@ -59,6 +46,7 @@ from pane_pool import (
     pool_for_session,
     windows_for_pool,
 )
+from runtime_auth import prepare_worker_reply_auth
 from session import Session, Status, clear_turn_fields, now_utc
 from session_lifecycle import SessionLifecycle, reap_idle_sessions
 from session_store import SessionStore
@@ -74,7 +62,6 @@ user_client: WebClient | None = None
 SESSION_CANCEL_ACTION_IDS = {"session_cancel", "slack_bridge_cancel", "cancel_session"}
 SESSION_END_ACTION_IDS = {"session_end", "slack_bridge_end", "end_session"}
 GRACEFUL_SHUTDOWN_REASON = "graceful_shutdown_restart"
-OPTIONAL_EXTENSION_WINDOW_NAME = CONFIG_OPTIONAL_EXTENSION_WINDOW_NAME
 ACTIVE_CAPACITY_STATUSES = {
     Status.CREATING,
     Status.STARTING,
@@ -92,9 +79,7 @@ RECOVERABLE_READY_TIMEOUT_REASONS = frozenset(
 
 
 def _tokens_available_for_import_init() -> bool:
-    if config.SLACK_BRIDGE_PROFILE in config.PUBLIC_PROFILES:
-        return bool(SLACK_BOT_TOKEN)
-    return bool(SLACK_BOT_TOKEN and SLACK_USER_TOKEN)
+    return bool(SLACK_BOT_TOKEN)
 
 
 def _initialize_clients() -> None:
@@ -242,11 +227,10 @@ def maybe_post_fixed_ack(
         return
     if not runtime.state.claim_ack(event_envelope["event_id"]):
         return
-    ack_text = optional_extension_ack_text(event_envelope) or DEFAULT_ACK_TEXT
     result = runtime.post_to_slack(
         event_envelope["reply_target"]["channel_id"],
         event_envelope["reply_target"]["thread_ts"],
-        ack_text,
+        DEFAULT_ACK_TEXT,
     )
     if result.get("suppressed") and result.get("reason") == "daily_notification_limit":
         runtime.state.update_ack(event_envelope["event_id"], status="suppressed_daily_limit")
@@ -300,25 +284,28 @@ def reap_orphan_panes(
         for pane_id in live_panes
         if pane_id in bridge_owned_panes and pane_id not in session_by_pane
     ]
+    removed_panes: list[str] = []
     for pane_id in orphan_panes:
         try:
-            tmux.kill_pane(pane_id)
+            if tmux.kill_pane(pane_id) is True:
+                removed_panes.append(pane_id)
+            else:
+                logger.warning("%s could not confirm orphan pane removal %s", log_context, pane_id)
         except Exception as exc:
             logger.warning("%s failed to kill orphan pane %s: %s", log_context, pane_id, exc)
-    return orphan_panes
+    return removed_panes
 
 
 def safe_list_panes(tmux, window_name: str) -> list[str]:
     try:
         panes = tmux.list_panes(window_name)
     except Exception as exc:
-        logger.debug("list_panes failed for %s: %s", window_name, exc)
-        return []
+        raise RuntimeError(f"tmux pane query failed for {window_name}") from exc
     if isinstance(panes, str):
         return [line.strip() for line in panes.splitlines() if line.strip()]
     if isinstance(panes, (list, tuple, set)):
         return [str(pane) for pane in panes if pane]
-    return []
+    raise RuntimeError(f"tmux pane query returned invalid result for {window_name}")
 
 
 def bridge_owned_pane_ids(tmux, *, window_name: str = GENERAL_WINDOW_NAME) -> list[str]:
@@ -328,16 +315,15 @@ def bridge_owned_pane_ids(tmux, *, window_name: str = GENERAL_WINDOW_NAME) -> li
     try:
         pane_infos = list_pane_infos(window_name)
     except Exception as exc:
-        logger.warning("Failed to inspect tmux pane ownership for %s: %s", window_name, exc)
-        return []
+        raise RuntimeError(f"tmux pane ownership query failed for {window_name}") from exc
     owned: list[str] = []
     for pane in pane_infos:
         is_bridge_owned = getattr(pane, "is_bridge_owned", None)
         if callable(is_bridge_owned):
-            if is_bridge_owned():
+            if is_bridge_owned() and getattr(pane, "bridge_identity", ""):
                 owned.append(pane.pane_id)
             continue
-        if getattr(pane, "bridge_owned", "") == "1":
+        if getattr(pane, "bridge_owned", "") == "1" and getattr(pane, "bridge_identity", ""):
             owned.append(pane.pane_id)
     return owned
 
@@ -410,14 +396,6 @@ def post_tmux_capacity_failure(
 def route_after_session_create_race(
     runtime: BridgeRuntime, session: Session, envelope: dict
 ) -> None:
-    if session and is_optional_extension_pool_mismatch(session, envelope):
-        runtime.state.update_event(
-            envelope["event_id"],
-            status="failed",
-            conversation_identity=session.conversation_identity,
-            failure_reason="optional_extension_pool_mismatch",
-        )
-        return
     if session.status is Status.ERROR:
         runtime.state.update_event(
             envelope["event_id"],
@@ -425,9 +403,6 @@ def route_after_session_create_race(
             conversation_identity=envelope["conversation_identity"],
             failure_reason=f"session_{session.status.value}",
         )
-        return
-    if is_duplicate_optional_extension_notification(session, envelope):
-        mark_duplicate_optional_extension_notification(runtime, session, envelope)
         return
     session = update_session_message_cursor(runtime, session, envelope)
     maybe_post_fixed_ack(runtime, envelope, session)
@@ -480,13 +455,12 @@ def create_session(runtime: BridgeRuntime, envelope: dict):
     session.last_event_id = envelope["event_id"]
     session.last_event_ts = envelope["source_message"]["ts"]
     session.last_thread_message_ts = envelope["source_message"]["ts"]
-    create_if_absent = getattr(runtime.store, "create_if_absent", None)
-    if callable(create_if_absent):
-        created = create_if_absent(session)
-    else:
-        runtime.store.save(session)
-        created = True
-    if not created:
+    queue_id = runtime.store.create_initial_queue_if_absent(
+        session,
+        envelope,
+        lease_owner=f"initial:{session.conversation_identity}:{uuid.uuid4().hex}",
+    )
+    if queue_id is None:
         existing = runtime.store.load(session.conversation_identity)
         if existing is None:
             runtime.state.update_event(
@@ -501,13 +475,11 @@ def create_session(runtime: BridgeRuntime, envelope: dict):
     maybe_post_fixed_ack(runtime, envelope, None)
     say = make_say(runtime, session.channel_id, session.thread_ts)
     threading.Thread(
-        target=runtime.worker.start, args=(session, envelope, say), daemon=True
+        target=runtime.worker.start,
+        args=(session, envelope, say),
+        kwargs={"queue_id": queue_id},
+        daemon=True,
     ).start()
-    runtime.state.update_event(
-        envelope["event_id"],
-        status="queued",
-        conversation_identity=session.conversation_identity,
-    )
 
 
 def update_session_message_cursor(
@@ -635,32 +607,11 @@ def apply_session_control(
     return True
 
 
-def handle_session_control(runtime: BridgeRuntime, session: Session | None, envelope: dict) -> bool:
-    if not envelope_builder.is_message_event(envelope):
-        return False
-    control_command = detect_session_control_command(
-        (envelope.get("source_message") or {}).get("text", "")
-    )
-    if control_command is None:
-        return False
-    return apply_session_control(runtime, session, envelope["event_id"], control_command)
-
-
 def route_envelope(runtime: BridgeRuntime, envelope: dict):
     if handle_envelope_extensions(EXTENSIONS, runtime, envelope):
         return
     session = runtime.store.load(envelope["conversation_identity"])
     if handle_completion_reaction(runtime, session, envelope):
-        return
-    if handle_session_control(runtime, session, envelope):
-        return
-    if session and is_optional_extension_pool_mismatch(session, envelope):
-        runtime.state.update_event(
-            envelope["event_id"],
-            status="failed",
-            conversation_identity=session.conversation_identity,
-            failure_reason="optional_extension_pool_mismatch",
-        )
         return
     if (
         session
@@ -697,9 +648,6 @@ def route_envelope(runtime: BridgeRuntime, envelope: dict):
             conversation_identity=envelope["conversation_identity"],
             failure_reason=f"session_{session.status.value}",
         )
-        return
-    if session and is_duplicate_optional_extension_notification(session, envelope):
-        mark_duplicate_optional_extension_notification(runtime, session, envelope)
         return
     if session:
         session = update_session_message_cursor(runtime, session, envelope)
@@ -785,9 +733,27 @@ def handle_block_action(runtime: BridgeRuntime, body: dict, ack=None) -> bool:
     action_id = action.get("action_id", "") or action.get("name", "")
     if action_id in SESSION_CANCEL_ACTION_IDS:
         session = runtime.store.load(conversation_identity) if conversation_identity else None
+        actor_id = (body.get("user") or {}).get("id") or body.get("user_id") or ""
+        if session is None or not is_authorized_kill_actor(session, actor_id):
+            runtime.state.update_event(
+                event_id,
+                status="done",
+                conversation_identity=conversation_identity,
+                failure_reason="block_control_unauthorized",
+            )
+            return True
         return apply_session_control(runtime, session, event_id, "cancel")
     if action_id in SESSION_END_ACTION_IDS:
         session = runtime.store.load(conversation_identity) if conversation_identity else None
+        actor_id = (body.get("user") or {}).get("id") or body.get("user_id") or ""
+        if session is None or not is_authorized_kill_actor(session, actor_id):
+            runtime.state.update_event(
+                event_id,
+                status="done",
+                conversation_identity=conversation_identity,
+                failure_reason="block_control_unauthorized",
+            )
+            return True
         return apply_session_control(runtime, session, event_id, "end")
 
     failure_reason = "unknown_block_action_ignored"
@@ -960,15 +926,6 @@ def register_handlers(runtime: BridgeRuntime):
             or event.get("user") == getattr(runtime, "bot_user_id", "")
         )
         if is_bot_event:
-            if is_optional_extension_notification_message(event):
-                handle_inbound(
-                    runtime,
-                    body,
-                    lambda rt, b, e: envelope_builder.build_message_envelope(
-                        rt, b, e, source_event_type="optional_extension_notification"
-                    ),
-                )
-                return
             claim_and_mark_event_done(
                 runtime,
                 body,
@@ -977,7 +934,7 @@ def register_handlers(runtime: BridgeRuntime):
                 source_event_type="message",
             )
             return
-        if not envelope_builder.is_supported_message_subtype(event, source_event_type="message"):
+        if not envelope_builder.is_supported_message_subtype(event):
             claim_and_mark_event_done(
                 runtime,
                 body,
@@ -993,26 +950,6 @@ def register_handlers(runtime: BridgeRuntime):
                 rt, b, e, source_event_type="message"
             ),
         )
-
-    @bridge_app.event("message_metadata_posted")
-    def on_message_metadata_posted(body, event):
-        if not is_optional_extension_notification_metadata(event.get("metadata")):
-            return
-        handle_inbound(
-            runtime,
-            body,
-            lambda rt, b, e: envelope_builder.build_message_metadata_posted_envelope(rt, b, e),
-        )
-
-    @bridge_app.event("message_metadata_updated")
-    def on_message_metadata_updated(body, event):
-        del body, event
-        return
-
-    @bridge_app.event("message_metadata_deleted")
-    def on_message_metadata_deleted(body, event):
-        del body, event
-        return
 
     @bridge_app.event("app_mention")
     def on_app_mention(body, event):
@@ -1256,9 +1193,6 @@ def drain_durable_event_queue(runtime: BridgeRuntime, *, limit: int = 100) -> di
     def is_startup_suspended(session: Session) -> bool:
         return (session.failure_reason or "").startswith("startup_cleanup_")
 
-    def is_optional_extension_pool_waiting(session: Session) -> bool:
-        return (session.failure_reason or "").startswith(f"{OPTIONAL_EXTENSION_POOL_WAITING_REASON_PREFIX}:")
-
     def is_restart_terminated(session: Session) -> bool:
         return session.failure_reason == GRACEFUL_SHUTDOWN_REASON
 
@@ -1280,7 +1214,7 @@ def drain_durable_event_queue(runtime: BridgeRuntime, *, limit: int = 100) -> di
         if session.status is Status.SUSPENDED and is_startup_suspended(session):
             stats["deferred"] += 1
             continue
-        if session.status is Status.SUSPENDED and is_optional_extension_pool_waiting(session):
+        if session.status is Status.CREATING:
             if not session.event_queue:
                 if runtime.state.fail_event_queue_row(
                     row["queue_id"], reason="queue_payload_missing"
@@ -1288,41 +1222,17 @@ def drain_durable_event_queue(runtime: BridgeRuntime, *, limit: int = 100) -> di
                     stats["failed"] += 1
                 continue
             next_msg = session.event_queue[0]
-            lease_owner = f"optional_extension-pool-retry:{session.conversation_identity}:{uuid.uuid4().hex}"
             claimed = runtime.store.claim_queue_head(
                 session.conversation_identity,
                 next_msg,
-                lease_owner=lease_owner,
+                lease_owner=f"initial-restart:{session.conversation_identity}:{uuid.uuid4().hex}",
             )
             if claimed is None:
                 stats["deferred"] += 1
                 continue
-            updated = runtime.store.transition(
-                session.conversation_identity,
-                Status.SUSPENDED,
-                Status.STARTING,
-                updates={
-                    "window_name": primary_window_for_pool(pool_for_session(session)),
-                    "pane_id": None,
-                    "failure_reason": None,
-                    "input_wait": None,
-                    **clear_turn_fields(),
-                },
-            )
-            if updated is None:
-                runtime.store.mark_queue_retryable(
-                    claimed["queue_id"],
-                    last_error="optional_extension_pool_waiting_start_transition_failed",
-                )
-                stats["deferred"] += 1
-                continue
             threading.Thread(
                 target=runtime.worker.start,
-                args=(
-                    updated,
-                    next_msg,
-                    make_say(runtime, updated.channel_id, updated.thread_ts),
-                ),
+                args=(session, next_msg, make_say(runtime, session.channel_id, session.thread_ts)),
                 kwargs={"queue_id": claimed["queue_id"]},
                 daemon=True,
             ).start()
@@ -1503,6 +1413,7 @@ def _resolve_derived_values():
 def main():
     config.resolve_runtime_paths()
     bridge_app, bridge_user_client = _ensure_clients()
+    prepare_worker_reply_auth()
     logger.info("Slack Bridge starting")
     logger.info("tmux: %s", TMUX_SESSION_NAME)
     logger.info("Max sessions: %s", MAX_CONCURRENT_SESSIONS)
@@ -1572,7 +1483,3 @@ def main():
 
     logger.info("Listening for Slack events")
     SocketModeHandler(bridge_app, config.SLACK_APP_TOKEN).start()
-
-
-if __name__ == "__main__":
-    main()

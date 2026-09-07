@@ -5,7 +5,6 @@ from bridge_logging import get_logger
 from config import (
     ANSWER_SEND_FAILED_TEXT,
     EMPTY_ANSWER_TEXT,
-    OPTIONAL_EXTENSION_PANE_POOL_NAME,
     QUEUE_APPEND_FAILED_TEXT,
     QUEUE_RETRY_TEXT,
     QUEUE_SEND_FAILED_TEXT,
@@ -16,7 +15,6 @@ from config import (
 )
 from input_detector import InputDetector
 from interactive_handler import InteractiveHandler
-from pane_pool import pool_for_session
 from session import Session, Status, activate_turn_fields, clear_turn_fields, now_utc
 from session_store import SessionStore
 from tmux_gateway import TmuxGateway
@@ -49,9 +47,6 @@ class MessageDispatch:
     @staticmethod
     def _valid_turn_payload(payload: dict | str | None) -> bool:
         return payload is not None and payload != {}
-
-    def is_optional_extension_conversation(self, session: Session) -> bool:
-        return pool_for_session(session) == OPTIONAL_EXTENSION_PANE_POOL_NAME
 
     def get_active_turn_payload(self, turn_id: str | None) -> dict | str | None:
         if not turn_id:

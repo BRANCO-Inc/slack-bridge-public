@@ -1,0 +1,32 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.14'
+      - name: Install
+        run: |
+          python3 -m venv venv
+          venv/bin/python -m pip install -r requirements.txt ruff
+      - name: Import real Slack SDK
+        run: venv/bin/python -c 'import slack_sdk, slack_bolt, dotenv; import slack_bridge'
+      - name: Lint
+        run: venv/bin/python -m ruff check .
+      - name: Test
+        run: venv/bin/python -m unittest discover -v

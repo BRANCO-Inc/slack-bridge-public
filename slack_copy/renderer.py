@@ -22,7 +22,6 @@ _MESSAGE_ALIASES = {
     "input_wait_tool_permission_number": "tool_permission_numbered",
     "input_wait_ask_user_question": "input_wait_ask",
     "input_wait_plan_approval": "plan_approval",
-    "optional_extension_notification_ack": "optional_extension_ack",
     "session_capacity_failure": "session_limit",
     "tmux_pane_capacity_failure": "tmux_pane_limit",
 }
