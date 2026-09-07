@@ -288,8 +288,9 @@ def ensure_no_process_conflict(updates: Mapping[str, str]) -> None:
 
 
 def apply_configuration(
-    brand_updates: Mapping[str, str], token_updates: Mapping[str, str], settings: Mapping[str, str]
+    brand_updates: Mapping[str, str], token_updates: Mapping[str, str]
 ) -> list[str]:
+    settings, _ = effective_settings(PROJECT_ROOT, environ={})
     env_path = PROJECT_ROOT / ".env"
     local_values = env_file_values(PROJECT_ROOT / ".env.local") if not env_path.exists() else {}
     changed = SETUP.setup()
@@ -410,19 +411,18 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.interactive:
-            changed = apply_configuration(brand_updates, {}, settings)
+            changed = apply_configuration(brand_updates, {})
             print("Create and install the Slack app from config/slack-app-manifest.yaml.")
             input("Press Enter after the Slack app is ready to enter tokens (blank tokens keep current values): ")
             token_updates = collect_token_updates()
             ensure_no_process_conflict(token_updates)
-            after_brand, _ = effective_settings(PROJECT_ROOT)
-            for path in apply_configuration({}, token_updates, after_brand):
+            for path in apply_configuration({}, token_updates):
                 if path not in changed:
                     changed.append(path)
         else:
             token_updates = collect_token_updates() if args.tokens else {}
             ensure_no_process_conflict(token_updates)
-            changed = apply_configuration(brand_updates, token_updates, settings)
+            changed = apply_configuration(brand_updates, token_updates)
         print("configured:")
         for path in changed:
             print(f"- {path}")

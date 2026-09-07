@@ -89,6 +89,23 @@ class ConfigureTests(unittest.TestCase):
             self.assertIn("- Name: Acme Bridge", identity)
             self.assertIn("- Company: Acme Co.", identity)
 
+    def test_unrelated_apply_keeps_persisted_bot_under_process_override(self):
+        directory, root = self.project()
+        with directory, self.configured_root(root), contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(
+                CONFIGURE.main(["--bot-name", "Persisted Bot", "--apply"]), 0
+            )
+            with patch.dict(os.environ, {"SLACK_BRIDGE_BOT_NAME": "Transient Bot"}):
+                self.assertEqual(CONFIGURE.main(["--company", "Acme", "--apply"]), 0)
+            values = self.runtime_values(root, ("SLACK_BRIDGE_BOT_NAME",))
+            self.assertEqual(values["SLACK_BRIDGE_BOT_NAME"], "Persisted Bot")
+            manifest = (root / "config/slack-app-manifest.yaml").read_text(encoding="utf-8")
+            identity = (root / "IDENTITY.md").read_text(encoding="utf-8")
+            self.assertEqual(manifest.count('"Persisted Bot"'), 2)
+            self.assertIn("- Name: Persisted Bot", identity)
+            self.assertIn("- Company: Acme", identity)
+            self.assertNotIn("Transient Bot", manifest + identity)
+
     def test_second_run_preserves_credentials_and_unrelated_identity(self):
         directory, root = self.project()
         with directory, self.configured_root(root):
