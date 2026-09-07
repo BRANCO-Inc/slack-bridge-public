@@ -18,30 +18,32 @@
 
 ## 最初の起動
 
-macOS / Linux / WSL、Python **3.14**、tmux、bash、curl、ログイン済みの Claude Code または Codex が必要です。
+**Claude Code / Codexに初回設定を任せられます。** macOS / Linuxで、またはWindowsのWSL2内で、このリポジトリを開いてください。
 
 ```bash
 git clone https://github.com/BRANCO-Inc/slack-bridge-public.git
 cd slack-bridge-public
-python3.14 -m venv venv
-venv/bin/python -m pip install -r requirements.txt
-venv/bin/python scripts/setup.py
+claude
 ```
 
-1. 生成された `config/slack-app-manifest.yaml` で、自分のワークスペースに Slack App を作成します。
-2. Appをインストールし、Bot tokenと `connections:write` を持つApp tokenを `.env` に設定します。setupが生成したローカル返信用トークンはそのまま残します。
-3. 利用するチャンネルにBotを招待します。
-4. 検査して起動します。
+Codexを使う場合、最後の行は `codex` にします。AIに次のように依頼してください。
 
-```bash
-venv/bin/python scripts/doctor.py
-venv/bin/python scripts/run.py
+```text
+Slack Bridgeを初回セットアップして。
+必要な情報を順に聞き、環境の準備、会社名・Bot名の設定、診断まで進めて。
+秘密トークンはチャットに貼らず、手元の端末で入力したい。
 ```
 
-Slackで `@Slack Bridge Assistant テストです。短く返信してください。` と送り、スレッドに返事が来れば導入完了です。
-起動中の端末が処理を担当します。終了は実行中のターミナルで `Ctrl+C` を押します。
+明示的に呼ぶ場合は、Claude Codeでは `/slack-bridge-setup`、Codexでは `$slack-bridge-setup` を使います。Skillはリポジトリ内に同梱されています。表示されなければ、このフォルダでAIを再起動するか「`.agents/skills/slack-bridge-setup/SKILL.md` を読んで実行して」と伝えてください。
 
-画面ごとの操作は [導入手順](docs/setup.md)、動作の確認項目は [動作確認](docs/smoke-test.md) にあります。
+会社名・Bot名・利用するAIを最初に設定すると、Slack App用manifestとAIの名前へ反映されます。Slack Appの作成、アカウントへのログイン、秘密トークンの入力は本人が行い、AIが手順を案内します。アイコンはSlack Appの管理画面で設定してください。
+
+Windowsでは **WSL2が必要** です。BridgeとAI CLIはWSL内にインストールして実行します。[Windows導入手順](docs/windows.md) に、WSLの準備とPowerShellからの設定・起動方法があります。Windows標準のPythonだけでは動作しません。
+
+**WindowsはPCの設定やWSL・CLIの違いにより、そのままでは動かない場合があります。各自のClaude Code / Codexに診断結果を渡し、自分の環境に合わせて適宜修正して使ってください。** 依頼文と確認項目もWindows手順に掲載しています。
+
+AIを使わず進める場合も、[導入手順](docs/setup.md) の対話式セットアップを利用できます。実行に必要なのはPython **3.14**、tmux、bash、curl、ログイン済みのClaude CodeまたはCodexです。
+起動後はSlackで自分のBotにメンションし、[動作確認](docs/smoke-test.md) を行ってください。起動中の端末が処理を担当します。終了は実行中のターミナルで `Ctrl+C` を押します。
 Socket Modeを利用するため、外部公開するHTTPサーバーは不要です。[Slack公式ガイド](https://docs.slack.dev/apis/events-api/using-socket-mode/)
 
 ## 利用範囲と設定
@@ -60,7 +62,7 @@ venv/bin/python -m unittest discover -v
 venv/bin/python -m ruff check .
 ```
 
-macOSとLinuxで同じテストをGitHub Actionsでも実行します。実Slackへの投稿やAI CLIの課金を伴うテストは自動実行しません。
+macOSとLinuxで同じテストをGitHub Actionsでも実行します。WindowsではPowerShellの起動経路をテストし、WSL呼び出し先はテスト用に置き換えます。Windows実機でのWSL・Slack・AIの一連の動作確認を代替するものではありません。実Slackへの投稿やAI CLIの課金を伴うテストは自動実行しません。
 更新はBridgeを停止して `git pull --ff-only`、依存関係のインストール、doctor、起動の順で行います。
 
 [配布範囲と構成](docs/distribution.md)
