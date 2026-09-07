@@ -16,6 +16,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REQUIRED_MODULES = ("slack_bolt", "slack_sdk", "dotenv")
 MINIMUM_PYTHON = (3, 14)
 REQUIRED_POSIX_TOOLS = ("bash", "curl", "awk", "mktemp", "seq")
+WINDOWS_RUNTIME_GUIDANCE = (
+    "Native Windows Python is unsupported. Use WSL2 with "
+    ".\\scripts\\windows.ps1 -Action doctor -Distro Ubuntu "
+    "-ProjectPath /home/<user>/src/slack-bridge-public."
+)
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,12 @@ def load_runtime_env() -> None:
 
 def setting(name: str) -> str:
     return os.environ.get(name, "").strip()
+
+
+def check_runtime_platform() -> Check:
+    if sys.platform == "win32":
+        return Check("linux_or_wsl_runtime", False, WINDOWS_RUNTIME_GUIDANCE)
+    return Check("linux_or_wsl_runtime", True, sys.platform)
 
 
 def check_python() -> Check:
@@ -223,6 +234,7 @@ def check_manifest() -> Check:
 def run_checks() -> list[Check]:
     load_runtime_env()
     return [
+        check_runtime_platform(),
         check_python(),
         check_venv_python(),
         check_running_from_venv(),
@@ -252,6 +264,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if sys.platform == "win32":
+        check = check_runtime_platform()
+        if args.json:
+            print(json.dumps([check.__dict__], ensure_ascii=False, indent=2))
+        else:
+            print(f"fail\t{check.name}\t{check.detail}")
+        return 2
     checks = run_checks()
     if args.json:
         print(json.dumps([check.__dict__ for check in checks], ensure_ascii=False, indent=2))

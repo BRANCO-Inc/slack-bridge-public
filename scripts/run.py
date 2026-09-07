@@ -7,6 +7,11 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 MINIMUM_PYTHON = (3, 14)
+WINDOWS_RUNTIME_GUIDANCE = (
+    "Native Windows Python is unsupported. Use WSL2 with "
+    ".\\scripts\\windows.ps1 -Action run -Distro Ubuntu "
+    "-ProjectPath /home/<user>/src/slack-bridge-public."
+)
 
 
 def load_env_files() -> None:
@@ -19,6 +24,10 @@ def load_env_files() -> None:
 
 
 def main() -> int:
+    if sys.platform == "win32":
+        print(WINDOWS_RUNTIME_GUIDANCE, file=sys.stderr)
+        return 2
+
     if sys.version_info[:2] < MINIMUM_PYTHON:
         version = ".".join(str(part) for part in sys.version_info[:3])
         print(
