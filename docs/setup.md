@@ -82,6 +82,8 @@ venv/bin/python scripts/run.py
 
 setupの通常実行は既存の設定を保持します。テンプレートの追加設定が必要になった場合は、更新説明を確認して自分の設定へ反映してください。
 
+以前の版で `IDENTITY.md` や `config/members.json` を編集済みの場合、この更新ではGit管理から外れるため、そのままのpullが競合で止まることがあります。初回の更新は旧Bridgeを停止し、旧フォルダを保持したまま別フォルダへcloneしてsetupを実行し、旧フォルダから `.env`、`IDENTITY.md`、`config/members.json` をコピーしてください。data rootを同じ場所に保てば実行データも引き継げます。新しいフォルダでdoctorを通してから起動します。
+
 ## 起動できないとき
 
 | 症状 | 確認すること |
