@@ -23,7 +23,7 @@ git clone https://github.com/BRANCO-Inc/slack-bridge-public.git ~/src/slack-brid
 cd ~/src/slack-bridge-public
 ```
 
-新しいシェルを開いて `uv --version` を確認します。launcher の setup は `uv venv --python 3.14 venv` を実行するため、必要な Python 3.14 は uv が取得します。
+新しいシェルを開いて `uv --version` を確認します。launcher の setup は `uv venv --python 3.14 --seed venv` を実行するため、必要な Python 3.14 とpipは uv が取得します。
 
 ## 2. WSL 内で AI CLI にログインする
 
@@ -38,6 +38,16 @@ claude
 ```
 
 Claude Code は起動時のブラウザ手順でログインします。Codex を使う場合は [Codex CLI の公式手順](https://developers.openai.com/codex/cli/) に従って Ubuntu 内へ導入し、同じ Ubuntu シェルでログインしてください。
+
+このリポジトリでAIに「Slack Bridgeを初回セットアップして」と依頼すれば、同梱Skillで続けられます。Ubuntuのターミナルで自分で進める場合は、次を順番に実行します。PowerShellに戻る必要はありません。
+
+```bash
+bash -l scripts/wsl.sh setup
+bash -l scripts/wsl.sh configure
+bash -l scripts/wsl.sh doctor
+```
+
+doctorがすべて `ok` になったら `bash -l scripts/wsl.sh run` で起動します。次のPowerShell launcherも同じスクリプトを呼び出します。
 
 ## 3. PowerShell launcher を使う
 

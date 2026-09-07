@@ -22,7 +22,7 @@ OS、シェル、現在のディレクトリ、`git status --short`、Python・t
 
 WindowsのBridgeはWSL2で動かす。Windows側のPythonやCLI、`/mnt/c` 配下を実行環境にせず、WSLのLinuxファイルシステム内で通常ユーザーとして作業する。WSL未導入・再起動待ちはWindows手順の本人操作を案内し、再開場所を伝える。WSL内にAI CLIが無ければ公式手順で導入し、本人にログインしてもらう。Windows側の認証がWSLにもあると仮定しない。
 
-macOS/Linuxでは不足する依存だけを既存のパッケージ管理方法と公式の導入手順で用意する。Pythonは3.14を使う。管理者権限が必要なら、その操作と理由を本人へ伝える。既存venvを勝手に削除しない。WSLでは `docs/windows.md` のuvによるvenv作成を使う。macOS/LinuxでPython 3.14が利用できる場合は次を実行する。
+macOS/Linuxでは不足する依存だけを既存のパッケージ管理方法と公式の導入手順で用意する。Pythonは3.14を使う。管理者権限が必要なら、その操作と理由を本人へ伝える。既存venvを勝手に削除しない。WSLでは `docs/windows.md` に沿ってuvを用意し、`bash -l scripts/wsl.sh setup` を実行する。macOS/LinuxでPython 3.14が利用できる場合は次を実行する。
 
 ```bash
 python3.14 -m venv venv

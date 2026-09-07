@@ -38,9 +38,9 @@ case "$action" in
       exit 2
     fi
     if [ ! -x venv/bin/python ]; then
-      uv venv --python 3.14 venv
+      uv venv --python 3.14 --seed venv
     fi
-    uv pip install --python venv/bin/python -r requirements.txt
+    venv/bin/python -m pip install -r requirements.txt
     venv/bin/python scripts/setup.py
     ;;
   configure)

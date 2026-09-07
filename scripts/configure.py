@@ -224,13 +224,11 @@ def update_identity_text(text: str, bot_name: str | None, company: str | None) -
 
 
 def write_if_changed(path: Path, text: str, *, private: bool = False) -> bool:
-    if path.read_text(encoding="utf-8") == text:
-        if private:
-            path.chmod(0o600)
-        return False
-    path.write_text(text, encoding="utf-8")
     if private:
         path.chmod(0o600)
+    if path.read_text(encoding="utf-8") == text:
+        return False
+    path.write_text(text, encoding="utf-8")
     return True
 
 
